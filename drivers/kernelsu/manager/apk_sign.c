@@ -365,7 +365,7 @@ bool is_manager_apk(char *path)
 		return true;
 
 	// SukiSU (SukiSU-Ultra)
-	if (check_v2_signature(path, 0x342, "efca3895eb48ca09ee18e19e79ab921c554746f332c1db4b2dd7a39d883713f0"))
+	if (check_v2_signature(path, 0x35c, "947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef"))
 		return true;
 
 	// ReSukiSU

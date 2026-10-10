@@ -61,7 +61,6 @@ on:
           - BakaSU
           - KOWX712-KernelSU
 
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -298,6 +297,7 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
+
       - name: Building kernel
         id: build
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
@@ -405,17 +405,15 @@ jobs:
 
             make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 olddefconfig
             
-# Sinh sẵn các header selinux (flask.h, av_permissions.h)
+            # Sinh sẵn các header selinux (flask.h, av_permissions.h)
             make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 security/selinux/
 
-# Copy các header vừa sinh sang thư mục gốc để BakaSU luôn tìm thấy
+            # Copy các header vừa sinh sang thư mục gốc để BakaSU luôn tìm thấy
             mkdir -p security/selinux/include
             cp -f out/security/selinux/flask.h security/selinux/include/ 2>/dev/null || true
             cp -f out/security/selinux/av_permissions.h security/selinux/include/ 2>/dev/null || true
             cp -f out/security/selinux/flask.h security/selinux/ 2>/dev/null || true
             cp -f out/security/selinux/av_permissions.h security/selinux/ 2>/dev/null || true
-
-         
           fi
 
           # 5. Biên dịch kernel
@@ -524,7 +522,6 @@ jobs:
           (cd AnyKernel3_AOSP && zip -r9 "$DIST_DIR/$NAME_AOSP" . -x "README*" -x ".git*" -x ".git/*")
 
           ls -lh "$DIST_DIR"
-
 
       - name: Get short SHA
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"

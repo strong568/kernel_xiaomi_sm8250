@@ -122,13 +122,11 @@ jobs:
 
           INPUT_TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
 
-          # 1. Truy vấn release và lấy trực tiếp URL của asset .tar.zst
           if [ "$INPUT_TAG" = "latest" ] || [ -z "$INPUT_TAG" ]; then
             echo "Fetching latest release from Neutron-Toolchains/clang-build-catalogue..."
             RELEASE_DATA=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest")
             
-            # Fallback sang release đầu tiên nếu /latest trả về rỗng
             if [ -z "$RELEASE_DATA" ] || [ "$(echo "$RELEASE_DATA" | jq -r '.message // empty')" = "Not Found" ]; then
               RELEASE_DATA=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 "https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases" | jq -r '.[0]')
@@ -150,7 +148,6 @@ jobs:
             exit 1
           fi
 
-          # 2. Tải và giải nén trực tiếp vào thư mục
           aria2c -x 16 -s 16 -k 1M "$DOWNLOAD_URL" -o "neutron-clang.tar.zst" || \
           curl -sSL "$DOWNLOAD_URL" -o "neutron-clang.tar.zst"
 
@@ -158,9 +155,9 @@ jobs:
           rm -f neutron-clang.tar.zst
 
           cd ..
-          echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
+          echo "clang-dir=$(pwd)/clang-neutron" >> "$GITHUB_OUTPUT"
+          echo "clang-tag=${TAG}" >> "$GITHUB_OUTPUT"
         working-directory: ${{ steps.workspace.outputs.workspace-folder }}
-
 
       - name: Display toolchain version
         run: |
@@ -204,9 +201,13 @@ jobs:
               ;;
             *)
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s dev
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash - dev
               ;;
           esac
+
+          # Vá lỗi pgtable.h cho Kernel 4.19
+          echo "Patching pgtable.h compatibility for kernel 4.19..."
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} + 2>/dev/null || true
 
       - name: Setup & Patch SuSFS
         if: inputs.ENABLE_SUSFS
@@ -263,7 +264,6 @@ jobs:
           export CCACHE_BASEDIR="${{ steps.kernel.outputs.kernel-folder }}"
           export CCACHE_COMPILERCHECK=content
 
-          # Tránh biến cảnh báo của Clang mới thành lỗi dừng biên dịch
           export KCFLAGS="-Wno-error -Wno-unused-command-line-argument"
           export HOSTCFLAGS="-Wno-error -Wno-unused-command-line-argument"
 

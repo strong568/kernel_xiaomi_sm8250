@@ -1,4 +1,4 @@
-Name: Build strong_kernel - Neutron Clang
+name: Build strong_kernel - Neutron Clang
 
 on:
   workflow_dispatch:

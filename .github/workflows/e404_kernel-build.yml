@@ -240,11 +240,9 @@ jobs:
 
           SUSFS_DIR="$(pwd)/susfs"
 
-          # 1. Chép source file fs
+          # 1. Chép source files và toàn bộ headers
           cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/ 2>/dev/null || true
           cp -f "${SUSFS_DIR}/kernel_patches/fs/sus_su.c" fs/ 2>/dev/null || true
-
-          # 2. Chép toàn bộ header của SuSFS (susfs.h, sus_su.h, susfs_def.h,...)
           cp -f "${SUSFS_DIR}/kernel_patches/include/linux/"*.h include/linux/ 2>/dev/null || true
 
           grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
@@ -252,15 +250,25 @@ jobs:
           echo "Applying Kernel SuSFS patch..."
           PATCH_FILE="${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
           if [ -f "$PATCH_FILE" ]; then
-            patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || true
+            patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || patch -p1 -N < "$PATCH_FILE" || true
           fi
 
-          # 3. Vá lỗi thiếu header INODE_STATE_SUS_KSTAT trong task_mmu.c
+          # 2. Khắc phục lỗi thiếu susfs_last_fake_mnt_id trong task_struct (include/linux/sched.h)
+          if ! grep -q "susfs_last_fake_mnt_id" include/linux/sched.h; then
+            echo "Injecting susfs fields into include/linux/sched.h..."
+            sed -i '/struct task_struct {/a \
+#ifdef CONFIG_KSU_SUSFS\
+	u64 susfs_last_fake_mnt_id;\
+#endif' include/linux/sched.h
+          fi
+
+          # 3. Vá lỗi thiếu include susfs.h trong task_mmu.c
           if [ -f fs/proc/task_mmu.c ]; then
             echo "Patching include susfs.h in fs/proc/task_mmu.c..."
             grep -q "linux/susfs.h" fs/proc/task_mmu.c || sed -i '1i #include <linux/susfs.h>' fs/proc/task_mmu.c
           fi
 
+          # 4. Patch SuSFS vào KernelSU nếu có thư mục KernelSU
           if [ "${{ steps.workspace.outputs.kernelsu }}" = "Yes" ] && [ -d KernelSU ]; then
             echo "Patching SuSFS into KernelSU..."
             pushd KernelSU
@@ -279,6 +287,7 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
+
 
       - name: Building kernel
         id: build

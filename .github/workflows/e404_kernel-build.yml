@@ -256,10 +256,15 @@ jobs:
           # 2. Khắc phục lỗi thiếu susfs_last_fake_mnt_id trong task_struct (include/linux/sched.h)
           if ! grep -q "susfs_last_fake_mnt_id" include/linux/sched.h; then
             echo "Injecting susfs fields into include/linux/sched.h..."
-            sed -i '/struct task_struct {/a \
-#ifdef CONFIG_KSU_SUSFS\
-	u64 susfs_last_fake_mnt_id;\
-#endif' include/linux/sched.h
+            python3 -c '
+with open("include/linux/sched.h", "r") as f:
+    content = f.read()
+target = "struct task_struct {"
+replacement = target + "\n#ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_last_fake_mnt_id;\n#endif"
+if target in content:
+    with open("include/linux/sched.h", "w") as f:
+        f.write(content.replace(target, replacement, 1))
+'
           fi
 
           # 3. Vá lỗi thiếu include susfs.h trong task_mmu.c

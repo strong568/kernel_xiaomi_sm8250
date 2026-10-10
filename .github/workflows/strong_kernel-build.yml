@@ -201,8 +201,9 @@ jobs:
               ;;
             *)
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash - dev
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- dev
               ;;
+
           esac
 
           # Vá lỗi pgtable.h cho Kernel 4.19

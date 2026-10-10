@@ -408,7 +408,7 @@ jobs:
           echo "::endgroup::"
 
           echo "elapsed_time=$(echo "$(date +%s) - ${{ steps.workspace.outputs.start_time }}" | bc)" >> "$GITHUB_OUTPUT"
-
+          
       - name: AnyKernel3
         id: anykernel
         if: success() && inputs.ANYKERNEL_URL != '' && inputs.ANYKERNEL_BRANCH != ''
@@ -472,20 +472,20 @@ jobs:
               if [ -s susfs_tool/ksu_susfs ]; then
                 mkdir -p "$dir/susfs"
                 cp -f susfs_tool/ksu_susfs "$dir/susfs/"
-                {
-                  echo ''
-                  echo '# --- Auto install ksu_susfs tool ---'
-                  echo 'if [ -f "$home/susfs/ksu_susfs" ]; then'
-                  echo '  ui_print "  -> Installing ksu_susfs tool..."'
-                  echo '  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do'
-                  echo '    if [ -d "$target_dir" ]; then'
-                  echo '      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"'
-                  echo '      chmod 755 "$target_dir/ksu_susfs"'
-                  echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
-                  echo '    fi'
-                  done
-                  echo 'fi'
-                } >> "$dir/anykernel.sh"
+                cat << 'EOF' >> "$dir/anykernel.sh"
+
+# --- Auto install ksu_susfs tool ---
+if [ -f "$home/susfs/ksu_susfs" ]; then
+  ui_print "  -> Installing ksu_susfs tool..."
+  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do
+    if [ -d "$target_dir" ]; then
+      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"
+      chmod 755 "$target_dir/ksu_susfs"
+      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true
+    fi
+  done
+fi
+EOF
               fi
             done
             rm -rf susfs_tool

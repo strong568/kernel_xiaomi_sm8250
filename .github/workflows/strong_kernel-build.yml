@@ -65,8 +65,8 @@ jobs:
           echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}"
           echo "Codename: ${{ github.event.inputs.CODENAME }}"
           echo "AnyKernel Url: ${{ github.event.inputs.ANYKERNEL_URL }}/tree/${{ github.event.inputs.ANYKERNEL_BRANCH }}"
-          echo "KernelSU: ${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_KERNELSU)] }}"
-          echo "SuSFS: ${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_SUSFS)] }}"
+          echo "KernelSU: ${{ inputs.ENABLE_KERNELSU && 'Yes' || 'No' }}"
+          echo "SuSFS: ${{ inputs.ENABLE_SUSFS && 'Yes' || 'No' }}"
           echo "Neutron Clang Tag: ${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
           echo "KSU Variant: ${{ github.event.inputs.WHICH_KSU }}"
           echo "::endgroup::"
@@ -78,8 +78,8 @@ jobs:
           cd workspace
           echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
           echo "start_time=$(date +%s)" >> $GITHUB_OUTPUT
-          echo "kernelsu=${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_KERNELSU)] }}" >> $GITHUB_OUTPUT
-          echo "susfs=${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_SUSFS)] }}" >> $GITHUB_OUTPUT
+          echo "kernelsu=${{ inputs.ENABLE_KERNELSU && 'Yes' || 'No' }}" >> $GITHUB_OUTPUT
+          echo "susfs=${{ inputs.ENABLE_SUSFS && 'Yes' || 'No' }}" >> $GITHUB_OUTPUT
           echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
 
       - name: Prepare the build environment
@@ -172,22 +172,18 @@ jobs:
 
           SUSFS_DIR="$(pwd)/susfs"
 
-          # 1. Sao chép source code SuSFS vào kernel tree
           cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/
           cp -f "${SUSFS_DIR}/kernel_patches/include/linux/susfs.h" include/linux/
           cp -f "${SUSFS_DIR}/kernel_patches/include/linux/sus_su.h" include/linux/ 2>/dev/null || true
 
-          # 2. Đảm bảo fs/Makefile có build susfs.o
           grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
 
-          # 3. Patch Kernel base
           echo "Applying Kernel SuSFS patch..."
           PATCH_FILE="${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
           if [ -f "$PATCH_FILE" ]; then
             patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || true
           fi
 
-          # 4. Patch KernelSU nếu không phải fork đã tích hợp sẵn (XXKSU-SUSFS)
           KSU_CHOICE="${{ github.event.inputs.WHICH_KSU }}"
           if [ "${{ steps.workspace.outputs.kernelsu }}" = "Yes" ] && [ "$KSU_CHOICE" != "XXKSU-SUSFS" ] && [ -d "KernelSU" ]; then
             echo "Patching SuSFS into KernelSU..."
@@ -218,13 +214,11 @@ jobs:
           export KBUILD_BUILD_USER="strong"
           export KBUILD_BUILD_HOST="GitHub Actions"
 
-          # Ccache setup
           export CCACHE_BASEDIR="${{ steps.kernel.outputs.kernel-folder }}"
           export CCACHE_COMPILERCHECK=content
 
           make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/alioth_defconfig
 
-          # Cấu hình SuSFS Kconfig
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
             echo "Enabling SuSFS Kconfig flags..."
             ./scripts/config --file out/.config \
@@ -242,7 +236,6 @@ jobs:
               -e CONFIG_KSU_SUSFS_OPEN_REDIRECT \
               -e CONFIG_KSU_SUSFS_SUS_SU
 
-            # Kiểm tra an toàn trước khi bật TRY_UMOUNT
             if grep -rq "path_umount" fs/ include/linux/ 2>/dev/null; then
               ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_TRY_UMOUNT
             else
@@ -273,7 +266,6 @@ jobs:
         run: |
           git clone --recursive --depth=1 ${{ github.event.inputs.ANYKERNEL_URL }} -b ${{ github.event.inputs.ANYKERNEL_BRANCH }} AnyKernel3
 
-          # Copy Kernel Images
           if [ -f out/arch/arm64/boot/Image ]; then
             cp -f out/arch/arm64/boot/Image AnyKernel3/ -rv
             test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
@@ -283,29 +275,12 @@ jobs:
             test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
           fi
 
-          # Tải và nhúng userspace tool ksu_susfs vào AnyKernel3 nếu bật SuSFS
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
             echo "Fetching ksu_susfs userspace tool..."
             mkdir -p AnyKernel3/susfs
-            
-            # Tải binary ksu_susfs arm64 prebuilt từ nhánh repo chính
             curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
             chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
 
-            # Chèn script tự động cài đặt ksu_susfs vào anykernel.sh khi flash
-            if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
-              cat << 'EOF' >> AnyKernel3/anykernel.sh
-
-          # Tải và nhúng userspace tool ksu_susfs vào AnyKernel3 nếu bật SuSFS
-          if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
-            echo "Fetching ksu_susfs userspace tool..."
-            mkdir -p AnyKernel3/susfs
-            
-            # Tải binary ksu_susfs arm64 prebuilt từ nhánh repo chính
-            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
-            chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
-
-            # Chèn script tự động cài đặt ksu_susfs vào anykernel.sh khi flash
             if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
               echo '' >> AnyKernel3/anykernel.sh
               echo '# --- Auto install ksu_susfs tool ---' >> AnyKernel3/anykernel.sh
@@ -321,7 +296,6 @@ jobs:
               echo 'fi' >> AnyKernel3/anykernel.sh
             fi
           fi
-
 
           SUFFIX=""
           [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"

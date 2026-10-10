@@ -50,7 +50,7 @@ on:
       WHICH_KSU:
         type: choice
         description: 'Choose the fork of KSU to use'
-        default: 'KSU-Next (rifsxd)'
+        default: 'backslashxx-KernelSU'
         options:
           - KSU-Next (rifsxd)
           - SukiSU-Ultra
@@ -58,6 +58,7 @@ on:
           - XXKSU-SUSFS
           - backslashxx-KernelSU
           - BakaSU
+          - KOWX712-KernelSU
 
 jobs:
   build:
@@ -199,9 +200,13 @@ jobs:
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup || true
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s main
               ;;
+            "KOWX712-KernelSU")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+              ;;
             *)
-              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- dev
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- next
               ;;
           esac
 
@@ -209,7 +214,6 @@ jobs:
           echo "Patching 4.19 compatibility for KernelSU..."
           find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} + 2>/dev/null || true
           find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} + 2>/dev/null || true
-
 
       - name: Setup & Patch SuSFS
         if: inputs.ENABLE_SUSFS

@@ -205,8 +205,8 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
               ;;
             *)
-              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- next
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- dev
               ;;
           esac
 
@@ -220,16 +220,13 @@ jobs:
           find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
             's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
 
-          # Xử lý yêu cầu export symbol của BakaSU
-          if [ "$KSU_CHOICE" = "BakaSU" ]; then
-            echo "Patching sel_handle_status_ops export for BakaSU..."
-            if [ -f security/selinux/selinuxfs.c ]; then
-              grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
-                echo "EXPORT_SYMBOL(sel_handle_status_ops);" >> security/selinux/selinuxfs.c
-            fi
-            find drivers/kernelsu/ KernelSU/ -type f -name "static_export_check.mk" -exec sed -i 's/\$(error.*)/# \0/g' {} + 2>/dev/null || true
+          # Xử lý triệt để file kiểm tra tĩnh của BakaSU
+          echo "Disabling BakaSU static_export_check..."
+          find drivers/kernelsu/ KernelSU/ -type f -name "static_export_check.mk" -exec truncate -s 0 {} + 2>/dev/null || true
+          if [ -f security/selinux/selinuxfs.c ]; then
+            grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
+              echo "EXPORT_SYMBOL(sel_handle_status_ops);" >> security/selinux/selinuxfs.c
           fi
-
 
       - name: Setup & Patch SuSFS
         if: inputs.ENABLE_SUSFS

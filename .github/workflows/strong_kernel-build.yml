@@ -203,12 +203,13 @@ jobs:
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
               curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- dev
               ;;
-
           esac
 
-          # Vá lỗi pgtable.h cho Kernel 4.19
-          echo "Patching pgtable.h compatibility for kernel 4.19..."
+          # Vá tương thích Kernel 4.19: pgtable.h và strncpy_from_user_nofault
+          echo "Patching 4.19 compatibility for KernelSU..."
           find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} + 2>/dev/null || true
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} + 2>/dev/null || true
+
 
       - name: Setup & Patch SuSFS
         if: inputs.ENABLE_SUSFS
@@ -329,7 +330,10 @@ jobs:
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
         run: |
           git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3
-
+          
+          # Đổi tên hiển thị kernel trong AnyKernel3 script
+          sed -i 's/kernel.string=.*/kernel.string=Munch Kernel/g' AnyKernel3/anykernel.sh
+          
           if [ -f out/arch/arm64/boot/Image ]; then
             cp -f out/arch/arm64/boot/Image AnyKernel3/ -v
             test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/

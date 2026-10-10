@@ -264,6 +264,30 @@ jobs:
           sed -i '/depends on OVERLAY_FS/d' arch/arm64/Kconfig 2>/dev/null || true
           sed -i '/select OVERLAY_FS/d' drivers/kernelsu/Kconfig KernelSU/kernel/Kconfig 2>/dev/null || true
 
+          # 2. Khắc phục thiếu symbol legacy hook KernelSU (devpts & input hook)
+          echo "Injecting weak compatibility stubs for legacy KSU hooks..."
+          cat << 'EOF' >> kernel/sys.c
+
+          // --- KernelSU legacy hook compatibility stubs ---
+          struct inode;
+          int ksu_handle_devpts(struct inode *inode);
+          int ksu_input_hook(unsigned int type, unsigned int code, int value);
+          int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
+
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) {
+              (void)inode;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_input_hook(unsigned int type, unsigned int code, int value) {
+              (void)type; (void)code; (void)value;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) {
+              (void)type; (void)code; (void)value;
+              return 0;
+          }
+          EOF
+
           export PATH="${{ steps.setup-clang.outputs.clang-dir }}/bin:$PATH"
           export ARCH="arm64"
           export SUBARCH="arm64"
@@ -275,14 +299,14 @@ jobs:
           export KCFLAGS="-Wno-error -Wno-unused-command-line-argument"
           export HOSTCFLAGS="-Wno-error -Wno-unused-command-line-argument"
 
-          # 2. Tạo config trực tiếp từ vendor/munch_defconfig
+          # 3. Tạo config trực tiếp từ vendor/munch_defconfig
           echo "Generating defconfig: vendor/munch_defconfig"
           make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/munch_defconfig
 
           # Đảm bảo bật CONFIG_OVERLAY_FS
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
 
-          # 3. Kích hoạt Kconfig cho SuSFS
+          # 4. Kích hoạt Kconfig cho SuSFS
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
             echo "Enabling SuSFS Kconfig flags..."
             for opt in \
@@ -311,7 +335,7 @@ jobs:
             make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 olddefconfig
           fi
 
-          # 4. Biên dịch kernel
+          # 5. Biên dịch kernel
           make -j"$(nproc --all)" O=out \
             CC="ccache clang" \
             CROSS_COMPILE=aarch64-linux-gnu- \

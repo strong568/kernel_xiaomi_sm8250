@@ -261,6 +261,10 @@ jobs:
           export CCACHE_BASEDIR="${{ steps.kernel.outputs.kernel-folder }}"
           export CCACHE_COMPILERCHECK=content
 
+          # Tránh biến cảnh báo của Clang mới thành lỗi dừng biên dịch
+          export KCFLAGS="-Wno-error -Wno-unused-command-line-argument"
+          export HOSTCFLAGS="-Wno-error -Wno-unused-command-line-argument"
+
           make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/alioth_defconfig
 
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
@@ -296,7 +300,9 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
             LLVM=1 \
-            LLVM_IAS=1
+            LLVM_IAS=1 \
+            KCFLAGS="-Wno-error -Wno-unused-command-line-argument" \
+            HOSTCFLAGS="-Wno-error -Wno-unused-command-line-argument"
 
           echo "::group::Ccache Stats"
           ccache -s

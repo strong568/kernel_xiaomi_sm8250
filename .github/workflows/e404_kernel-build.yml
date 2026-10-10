@@ -298,7 +298,6 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
-
       - name: Building kernel
         id: build
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}

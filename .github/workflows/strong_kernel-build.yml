@@ -118,36 +118,43 @@ jobs:
           mkdir -p clang-neutron
           cd clang-neutron
 
-          TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
+          INPUT_TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
 
-          # Tải antman từ repo chính xác của tác giả dakkshesh07
-          curl -sSL "https://raw.githubusercontent.com/dakkshesh07/antman/main/antman" -o antman || \
-          curl -sSL "https://raw.githubusercontent.com/neutrons-project/antman/master/antman" -o antman
-          
-          # Đảm bảo file tải về là shell script chứ không phải trang 404
-          if ! head -n 1 antman | grep -q "^#\!"; then
-            echo "Error: Failed to download antman (returned 404/HTML). Checking contents:"
-            cat antman
-            exit 1
-          fi
+          # 1. Tìm release tag mới nhất từ repo Neutron-Toolchains
+          if [ "$INPUT_TAG" = "latest" ] || [ -z "$INPUT_TAG" ]; then
+            echo "Querying latest tag from Neutron-Toolchains..."
+            TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/Neutron-Toolchains/clang-builds/releases/latest" | jq -r '.tag_name // empty')
 
-          chmod +x antman
+            # Nếu API /releases/latest trả về rỗng, lấy tag đầu tiên trong danh sách releases
+            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+              TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/Neutron-Toolchains/clang-builds/releases" | jq -r '.[0].tag_name // empty')
+            fi
 
-          if [ "$TAG" = "latest" ] || [ -z "$TAG" ]; then
-            echo "Syncing latest Neutron Clang build..."
-            ./antman -S
+            # Fallback lấy tag qua git ls-remote nếu GitHub API bị rate-limit
+            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+              TAG=$(git ls-remote --tags --refs https://github.com/Neutron-Toolchains/clang-builds.git | awk -F/ '{print $NF}' | sort -V | tail -n 1)
+            fi
           else
-            echo "Syncing Neutron Clang build with tag: $TAG..."
-            ./antman -S "$TAG"
+            TAG="$INPUT_TAG"
           fi
 
-          # Patch glibc tương thích môi trường Ubuntu host
-          ./antman --patch=glibc
+          echo "Selected Neutron Clang Tag: $TAG"
+
+          # 2. Tải và giải nén trực tiếp file nén .tar.zst của tag đó
+          DOWNLOAD_URL="https://github.com/Neutron-Toolchains/clang-builds/releases/download/${TAG}/neutron-clang-${TAG}.tar.zst"
+          echo "Downloading from: $DOWNLOAD_URL"
+
+          aria2c -x 16 -s 16 -k 1M "$DOWNLOAD_URL" -o "neutron-clang.tar.zst" || \
+          curl -sSL "$DOWNLOAD_URL" -o "neutron-clang.tar.zst"
+
+          tar -I zstd -xf neutron-clang.tar.zst
+          rm -f neutron-clang.tar.zst
 
           cd ..
           echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
         working-directory: ${{ steps.workspace.outputs.workspace-folder }}
-
 
       - name: Display toolchain version
         run: |

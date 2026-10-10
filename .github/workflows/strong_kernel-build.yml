@@ -41,10 +41,12 @@ on:
         type: boolean
         default: true
       NEUTRON_CLANG_TAG:
-        description: 'Which toolchain build to use from Neutron-Clang repos (use "latest" for newest build)'
-        default: 'latest'
-        required: true
-        type: string
+        type: choice
+        description: 'Choose Neutron Clang build (10032024 is recommended for kernel 4.19)'
+        default: '10032024'
+        options:
+          - '10032024'
+          - 'latest'
       WHICH_KSU:
         type: choice
         description: 'Choose the fork of KSU to use'

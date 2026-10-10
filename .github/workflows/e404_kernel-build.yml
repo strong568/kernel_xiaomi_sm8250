@@ -255,6 +255,12 @@ jobs:
             patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || true
           fi
 
+          # 3. Vá lỗi thiếu header INODE_STATE_SUS_KSTAT trong task_mmu.c
+          if [ -f fs/proc/task_mmu.c ]; then
+            echo "Patching include susfs.h in fs/proc/task_mmu.c..."
+            grep -q "linux/susfs.h" fs/proc/task_mmu.c || sed -i '1i #include <linux/susfs.h>' fs/proc/task_mmu.c
+          fi
+
           if [ "${{ steps.workspace.outputs.kernelsu }}" = "Yes" ] && [ -d KernelSU ]; then
             echo "Patching SuSFS into KernelSU..."
             pushd KernelSU
@@ -273,7 +279,6 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
-
 
       - name: Building kernel
         id: build

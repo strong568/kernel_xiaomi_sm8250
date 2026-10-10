@@ -253,8 +253,10 @@ jobs:
         id: build
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
         run: |
-          git submodule init || true
-          git submodule update || true
+          # 1. Khử triệt để vòng lặp phụ thuộc Kconfig giữa OVERLAY_FS và KSU
+          echo "Fixing Kconfig recursive dependency..."
+          sed -i '/depends on OVERLAY_FS/d' arch/arm64/Kconfig 2>/dev/null || true
+          sed -i '/select OVERLAY_FS/d' drivers/kernelsu/Kconfig KernelSU/kernel/Kconfig 2>/dev/null || true
 
           export PATH="${{ steps.setup-clang.outputs.clang-dir }}/bin:$PATH"
           export ARCH="arm64"
@@ -267,8 +269,14 @@ jobs:
           export KCFLAGS="-Wno-error -Wno-unused-command-line-argument"
           export HOSTCFLAGS="-Wno-error -Wno-unused-command-line-argument"
 
-          make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/alioth_defconfig
+          # 2. Tạo config trực tiếp từ vendor/munch_defconfig
+          echo "Generating defconfig: vendor/munch_defconfig"
+          make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/munch_defconfig
 
+          # Đảm bảo bật CONFIG_OVERLAY_FS
+          ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
+
+          # 3. Kích hoạt Kconfig cho SuSFS
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
             echo "Enabling SuSFS Kconfig flags..."
             for opt in \
@@ -297,6 +305,7 @@ jobs:
             make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 olddefconfig
           fi
 
+          # 4. Biên dịch kernel
           make -j"$(nproc --all)" O=out \
             CC="ccache clang" \
             CROSS_COMPILE=aarch64-linux-gnu- \

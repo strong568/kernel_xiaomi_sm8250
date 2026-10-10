@@ -120,24 +120,34 @@ jobs:
 
           TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
 
-          # Tải công cụ chính thức antman của Neutron
-          curl -sSL "https://raw.githubusercontent.com/neutrons-project/antman/main/antman" -o antman
+          # Tải antman từ repo chính xác của tác giả dakkshesh07
+          curl -sSL "https://raw.githubusercontent.com/dakkshesh07/antman/main/antman" -o antman || \
+          curl -sSL "https://raw.githubusercontent.com/neutrons-project/antman/master/antman" -o antman
+          
+          # Đảm bảo file tải về là shell script chứ không phải trang 404
+          if ! head -n 1 antman | grep -q "^#\!"; then
+            echo "Error: Failed to download antman (returned 404/HTML). Checking contents:"
+            cat antman
+            exit 1
+          fi
+
           chmod +x antman
 
           if [ "$TAG" = "latest" ] || [ -z "$TAG" ]; then
-            echo "Syncing latest Neutron Clang build via antman..."
-            ./antman --sync
+            echo "Syncing latest Neutron Clang build..."
+            ./antman -S
           else
-            echo "Syncing Neutron Clang build with tag: $TAG via antman..."
-            ./antman --sync "$TAG"
+            echo "Syncing Neutron Clang build with tag: $TAG..."
+            ./antman -S "$TAG"
           fi
 
-          # Tự động patch runtime/glibc cần thiết cho môi trường host
+          # Patch glibc tương thích môi trường Ubuntu host
           ./antman --patch=glibc
 
           cd ..
           echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
         working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+
 
       - name: Display toolchain version
         run: |

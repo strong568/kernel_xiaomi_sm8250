@@ -376,53 +376,78 @@ jobs:
         continue-on-error: true
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
         run: |
-          git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3
-          
-          # Đổi tên hiển thị kernel trong AnyKernel3 script
-          sed -i 's/kernel.string=.*/kernel.string=Munch Kernel/g' AnyKernel3/anykernel.sh
-          
-          if [ -f out/arch/arm64/boot/Image ]; then
-            cp -f out/arch/arm64/boot/Image AnyKernel3/ -v
-            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
-            test -f out/arch/arm64/boot/dtb.img && cp -v out/arch/arm64/boot/dtb.img AnyKernel3/dtb
-          elif [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            cp -f out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ -v
-            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
-          fi
+          # 1. Chuẩn bị 2 thư mục đóng gói riêng
+          git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3_Base
+          cp -r AnyKernel3_Base AnyKernel3_MIUI
+          cp -r AnyKernel3_Base AnyKernel3_AOSP
+          rm -rf AnyKernel3_Base
 
+          # Tên kernel hiển thị
+          sed -i 's/kernel.string=.*/kernel.string=Munch Kernel (HyperOS\/MIUI)/g' AnyKernel3_MIUI/anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=Munch Kernel (AOSP)/g' AnyKernel3_AOSP/anykernel.sh
+
+          # 2. Đưa Kernel Image và DTB vào cả 2 bản
+          for dir in AnyKernel3_MIUI AnyKernel3_AOSP; do
+            if [ -f out/arch/arm64/boot/Image ]; then
+              cp -f out/arch/arm64/boot/Image "$dir/" -v
+              test -f out/arch/arm64/boot/dtb.img && cp -v out/arch/arm64/boot/dtb.img "$dir/dtb"
+            elif [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              cp -f out/arch/arm64/boot/Image.gz-dtb "$dir/" -v
+            fi
+          done
+
+          # 3. Phân vùng DTBO: Chỉ nạp cho bản MIUI/HyperOS, xóa khỏi bản AOSP
+          test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3_MIUI/
+          rm -f AnyKernel3_AOSP/dtbo.img
+
+          # 4. Tích hợp ksu_susfs tool cho cả 2 bản nếu bật SuSFS
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
             echo "Fetching ksu_susfs userspace tool..."
-            mkdir -p AnyKernel3/susfs
-            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
-            chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
+            mkdir -p susfs_tool
+            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o susfs_tool/ksu_susfs || true
+            chmod +x susfs_tool/ksu_susfs 2>/dev/null || true
 
-            if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
-              {
-                echo ''
-                echo '# --- Auto install ksu_susfs tool ---'
-                echo 'if [ -f "$home/susfs/ksu_susfs" ]; then'
-                echo '  ui_print "  -> Installing ksu_susfs tool..."'
-                echo '  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do'
-                echo '    if [ -d "$target_dir" ]; then'
-                echo '      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"'
-                echo '      chmod 755 "$target_dir/ksu_susfs"'
-                echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
-                echo '    fi'
-                echo '  done'
-                echo 'fi'
-              } >> AnyKernel3/anykernel.sh
-            fi
+            for dir in AnyKernel3_MIUI AnyKernel3_AOSP; do
+              mkdir -p "$dir/susfs"
+              cp -f susfs_tool/ksu_susfs "$dir/susfs/" 2>/dev/null || true
+
+              if [ -f "$dir/anykernel.sh" ] && [ -f "$dir/susfs/ksu_susfs" ]; then
+                {
+                  echo ''
+                  echo '# --- Auto install ksu_susfs tool ---'
+                  echo 'if [ -f "$home/susfs/ksu_susfs" ]; then'
+                  echo '  ui_print "  -> Installing ksu_susfs tool..."'
+                  echo '  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do'
+                  echo '    if [ -d "$target_dir" ]; then'
+                  echo '      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"'
+                  echo '      chmod 755 "$target_dir/ksu_susfs"'
+                  echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
+                  echo '    fi'
+                  done
+                  echo 'fi'
+                } >> "$dir/anykernel.sh"
+              fi
+            done
+            rm -rf susfs_tool
           fi
 
           SUFFIX=""
           [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"
           [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ] && SUFFIX="${SUFFIX}-SUSFS"
 
-          name="strong_kernel${SUFFIX}-v${{ github.run_number }}.zip"
-          cd AnyKernel3
-          zip -r9 "$name" . -x "README*" "$name"
-          mv "$name" "${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/"
-          echo "zipname=$name" >> "$GITHUB_OUTPUT"
+          # 5. Đóng gói 2 file ZIP riêng biệt
+          NAME_MIUI="strong_kernel${SUFFIX}-HyperOS_MIUI-v${{ github.run_number }}.zip"
+          NAME_AOSP="strong_kernel${SUFFIX}-AOSP-v${{ github.run_number }}.zip"
+
+          cd AnyKernel3_MIUI
+          zip -r9 "$NAME_MIUI" . -x "README*" "$NAME_MIUI"
+          mv "$NAME_MIUI" "${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/"
+          cd ..
+
+          cd AnyKernel3_AOSP
+          zip -r9 "$NAME_AOSP" . -x "README*" "$NAME_AOSP"
+          mv "$NAME_AOSP" "${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/"
+          cd ..
 
       - name: Get short SHA
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
@@ -446,6 +471,10 @@ jobs:
             <b>${{ steps.workspace.outputs.build_title }}</b>
             <b>Kernel successfully built!</b>, took ${{ steps.build.outputs.elapsed_time }} seconds.
 
+            <b>Packages generated</b>:
+            • <code>HyperOS_MIUI</code>: Dành cho MIUI stock, HyperOS China/Global, xiaomi.eu.
+            • <code>AOSP</code>: Dành cho PixelOS, LineageOS, crDroid, Evolution X (giữ DTBO gốc tránh lỗi touch).
+
             <b>Kernel tree</b>: ${{ inputs.KERNEL_TREE }}/tree/${{ inputs.KERNEL_TREE_BRANCH }}
             <b>KernelSU</b>: ${{ steps.workspace.outputs.kernelsu }} (${{ inputs.WHICH_KSU }})
             <b>SuSFS</b>: ${{ steps.workspace.outputs.susfs }}
@@ -453,3 +482,5 @@ jobs:
             <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+

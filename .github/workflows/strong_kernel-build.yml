@@ -1,1 +1,352 @@
-yu
+Name: Build strong_kernel - Neutron Clang
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_TITLE:
+        description: 'Custom Build Title'
+        required: false
+      KERNEL_TREE:
+        description: 'Kernel Tree'
+        default: 'https://github.com/EmanuelCN/kernel_xiaomi_sm8250'
+        required: true
+      KERNEL_TREE_BRANCH:
+        description: 'Kernel Tree Branch'
+        required: true
+        default: 'staging'
+      CODENAME:
+        description: 'Phone Codename'
+        default: 'munch'
+        required: true
+      ANYKERNEL_URL:
+        description: 'AnyKernel Url (leave blank if you dont want AnyKernel)'
+        default: 'https://github.com/nunkki/Anykernel3-Munch'
+        required: false
+      ANYKERNEL_BRANCH:
+        description: 'AnyKernel Branch (defaults to codename)'
+        default: 'main'
+        required: false
+      ENABLE_KERNELSU:
+        description: 'KernelSU'
+        type: boolean
+        default: true
+      ENABLE_SUSFS:
+        description: 'Enable and Patch SuSFS'
+        type: boolean
+        default: true
+      NEUTRON_CLANG_TAG:
+        description: 'Which toolchain build to use from Neutron-Clang repos (use "latest" for newest build)'
+        default: 'latest'
+        required: true
+        type: string
+      WHICH_KSU:
+        type: choice
+        description: 'Choose the fork of KSU to use'
+        options: 
+          - KSU-Next (rifsxd)
+          - SukiSU-Ultra
+          - RKSU (rsuntk)
+          - XXKSU-SUSFS
+          - backslashxx-KernelSU
+          - BakaSU
+
+jobs:
+  build:
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Display User Inputs
+        run: |
+          echo "::group::User Environment Variables"
+          echo "Custom Build Title: ${{ github.event.inputs.BUILD_TITLE }}"
+          echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}"
+          echo "Codename: ${{ github.event.inputs.CODENAME }}"
+          echo "AnyKernel Url: ${{ github.event.inputs.ANYKERNEL_URL }}/tree/${{ github.event.inputs.ANYKERNEL_BRANCH }}"
+          echo "KernelSU: ${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_KERNELSU)] }}"
+          echo "SuSFS: ${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_SUSFS)] }}"
+          echo "Neutron Clang Tag: ${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
+          echo "KSU Variant: ${{ github.event.inputs.WHICH_KSU }}"
+          echo "::endgroup::"
+
+      - name: Initialize workspace
+        id: workspace
+        run: |
+          mkdir workspace
+          cd workspace
+          echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+          echo "start_time=$(date +%s)" >> $GITHUB_OUTPUT
+          echo "kernelsu=${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_KERNELSU)] }}" >> $GITHUB_OUTPUT
+          echo "susfs=${{ fromJSON('["No", "Yes"]')[fromJSON(github.event.inputs.ENABLE_SUSFS)] }}" >> $GITHUB_OUTPUT
+          echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
+
+      - name: Prepare the build environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y -qq libarchive-tools binutils git make bc bison openssl \
+                                                          curl zip kmod cpio flex libelf-dev libssl-dev libtfm-dev \
+                                                          libc6-dev device-tree-compiler ca-certificates python3 \
+                                                          xz-utils aria2 build-essential ccache libncurses-dev zstd jq patch
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ github.ref_name }}-
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          mkdir -p ~/.ccache
+          ccache --set-config=max_size=2.0G
+          ccache --set-config=compression=true
+          ccache -z
+
+      - name: Download Neutron Clang
+        id: setup-clang
+        run: |
+          TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
+
+          if [ "$TAG" = "latest" ] || [ -z "$TAG" ]; then
+            echo "Fetching latest release tag from GitHub API..."
+            TAG=$(curl -sL https://api.github.com/repos/neutrons-project/clang-builds/releases/latest | jq -r '.tag_name')
+          fi
+
+          echo "Selected Neutron Clang Tag: $TAG"
+          mkdir -p clang-neutron
+
+          curl -sL "https://github.com/neutrons-project/clang-builds/releases/download/${TAG}/neutron-clang-${TAG}.tar.zst" \
+            | zstd -d | tar -xf - -C clang-neutron/
+
+          echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
+        working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+
+      - name: Display toolchain version
+        run: |
+          export PATH="${{ steps.setup-clang.outputs.clang-dir }}/bin:$PATH"
+          clang --version
+
+      - name: Clone kernel source
+        id: kernel
+        run: |
+          git clone --depth=1 ${{ github.event.inputs.KERNEL_TREE }} -b ${{ github.event.inputs.KERNEL_TREE_BRANCH }} kernel_tree
+          echo "kernel-folder=$(pwd)/kernel_tree" >> $GITHUB_OUTPUT
+        working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+
+      - name: Adding KernelSU
+        if: ${{ steps.workspace.outputs.kernelsu == 'Yes' }}
+        run: |
+          KSU_CHOICE="${{ github.event.inputs.WHICH_KSU }}"
+          echo "Setting up KernelSU fork: ${KSU_CHOICE}"
+
+          if [[ "$KSU_CHOICE" == "SukiSU-Ultra" ]]; then
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s main
+          elif [[ "$KSU_CHOICE" == "XXKSU-SUSFS" ]]; then
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/zenwav/KernelSU-SUSFS/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/zenwav/KernelSU-SUSFS/refs/heads/master/kernel/setup.sh" | bash -s master
+          elif [[ "$KSU_CHOICE" == "RKSU (rsuntk)" ]]; then
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s v3.2.2-10-legacy
+          elif [[ "$KSU_CHOICE" == "backslashxx-KernelSU" ]]; then
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+          elif [[ "$KSU_CHOICE" == "BakaSU" ]]; then
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s main
+          else
+              [ -d "KernelSU" ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash - dev
+          fi
+        working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+
+      - name: Setup & Patch SuSFS
+        if: ${{ steps.workspace.outputs.susfs == 'Yes' }}
+        run: |
+          echo "::group::Configuring SuSFS"
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.19 susfs
+
+          SUSFS_DIR="$(pwd)/susfs"
+
+          # 1. Sao chép source code SuSFS vào kernel tree
+          cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/
+          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/susfs.h" include/linux/
+          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/sus_su.h" include/linux/ 2>/dev/null || true
+
+          # 2. Đảm bảo fs/Makefile có build susfs.o
+          grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+
+          # 3. Patch Kernel base
+          echo "Applying Kernel SuSFS patch..."
+          PATCH_FILE="${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
+          if [ -f "$PATCH_FILE" ]; then
+            patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || true
+          fi
+
+          # 4. Patch KernelSU nếu không phải fork đã tích hợp sẵn (XXKSU-SUSFS)
+          KSU_CHOICE="${{ github.event.inputs.WHICH_KSU }}"
+          if [ "${{ steps.workspace.outputs.kernelsu }}" = "Yes" ] && [ "$KSU_CHOICE" != "XXKSU-SUSFS" ] && [ -d "KernelSU" ]; then
+            echo "Patching SuSFS into KernelSU..."
+            cd KernelSU
+            KSU_PATCH="${SUSFS_DIR}/ksu_patches/10_enable_susfs_for_ksu.patch"
+
+            if patch -p1 --dry-run -N < "$KSU_PATCH" >/dev/null 2>&1; then
+              patch -p1 -N < "$KSU_PATCH"
+            else
+              echo "Applying fallback patch for KSU..."
+              git apply --3way "$KSU_PATCH" 2>/dev/null || patch -p1 -N < "$KSU_PATCH" || true
+              rm -f kernel/*.rej 2>/dev/null || true
+            fi
+            cd ..
+          fi
+
+          rm -rf susfs
+          echo "::endgroup::"
+        working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+
+      - name: Building kernel
+        id: build
+        run: |
+          git submodule init && git submodule update
+          export PATH="${{ steps.setup-clang.outputs.clang-dir }}/bin:$PATH"
+          export ARCH="arm64"
+          export SUBARCH="arm64"
+          export KBUILD_BUILD_USER="strong"
+          export KBUILD_BUILD_HOST="GitHub Actions"
+
+          # Ccache setup
+          export CCACHE_BASEDIR="${{ steps.kernel.outputs.kernel-folder }}"
+          export CCACHE_COMPILERCHECK=content
+
+          make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/alioth_defconfig
+
+          # Cấu hình SuSFS Kconfig
+          if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
+            echo "Enabling SuSFS Kconfig flags..."
+            ./scripts/config --file out/.config \
+              -e CONFIG_KSU_SUSFS \
+              -e CONFIG_KSU_SUSFS_SUS_PATH \
+              -e CONFIG_KSU_SUSFS_SUS_MOUNT \
+              -e CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+              -e CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+              -e CONFIG_KSU_SUSFS_SUS_KSTAT \
+              -e CONFIG_KSU_SUSFS_SUS_OVERLAYFS \
+              -e CONFIG_KSU_SUSFS_SPOOF_UNAME \
+              -e CONFIG_KSU_SUSFS_ENABLE_LOG \
+              -e CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+              -e CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+              -e CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+              -e CONFIG_KSU_SUSFS_SUS_SU
+
+            # Kiểm tra an toàn trước khi bật TRY_UMOUNT
+            if grep -rq "path_umount" fs/ include/linux/ 2>/dev/null; then
+              ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_TRY_UMOUNT
+            else
+              ./scripts/config --file out/.config -d CONFIG_KSU_SUSFS_TRY_UMOUNT
+            fi
+
+            make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 olddefconfig
+          fi
+
+          make -j$(nproc --all) O=out \
+                                CC="ccache clang" \
+                                CROSS_COMPILE=aarch64-linux-gnu- \
+                                CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                                LLVM=1 \
+                                LLVM_IAS=1
+
+          echo "::group::Ccache Stats"
+          ccache -s
+          echo "::endgroup::"
+
+          echo "elapsed_time=$(echo "$(date +%s) - ${{ steps.workspace.outputs.start_time }}" | bc)" >> $GITHUB_OUTPUT
+        working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+
+      - name: AnyKernel3
+        id: anykernel
+        if: ${{ success() && github.event.inputs.ANYKERNEL_URL != '' && github.event.inputs.ANYKERNEL_BRANCH != '' }}
+        continue-on-error: true
+        run: |
+          git clone --recursive --depth=1 ${{ github.event.inputs.ANYKERNEL_URL }} -b ${{ github.event.inputs.ANYKERNEL_BRANCH }} AnyKernel3
+
+          # Copy Kernel Images
+          if [ -f out/arch/arm64/boot/Image ]; then
+            cp -f out/arch/arm64/boot/Image AnyKernel3/ -rv
+            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
+            test -f out/arch/arm64/boot/dtb.img && cp -v out/arch/arm64/boot/dtb.img AnyKernel3/dtb
+          elif [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp -f out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ -rv
+            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
+          fi
+
+          # Tải và nhúng userspace tool ksu_susfs vào AnyKernel3 nếu bật SuSFS
+          if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
+            echo "Fetching ksu_susfs userspace tool..."
+            mkdir -p AnyKernel3/susfs
+            
+            # Tải binary ksu_susfs arm64 prebuilt từ nhánh repo chính
+            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
+            chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
+
+            # Chèn script tự động cài đặt ksu_susfs vào anykernel.sh khi flash
+            if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
+              cat << 'EOF' >> AnyKernel3/anykernel.sh
+
+# --- Auto install ksu_susfs tool ---
+if [ -f "$home/susfs/ksu_susfs" ]; then
+  ui_print "  -> Installing ksu_susfs tool..."
+  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do
+    if [ -d "$target_dir" ]; then
+      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"
+      chmod 755 "$target_dir/ksu_susfs"
+      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true
+    fi
+  done
+fi
+EOF
+            fi
+          fi
+
+          SUFFIX=""
+          [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"
+          [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ] && SUFFIX="${SUFFIX}-SUSFS"
+
+          name="strong_kernel${SUFFIX}-v${{ github.run_number }}.zip"
+          cd AnyKernel3
+          zip -r9 $name * -x README $name
+          mv $name ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/
+          echo "zipname=$name" >> $GITHUB_OUTPUT
+        working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+
+      - name: Get short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          preserve_order: true
+          files: |
+            ${{ steps.kernel.outputs.kernel-folder }}/out/.config
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz-dtb
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtb.img
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtbo.img
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/${{ steps.anykernel.outputs.zipname }}
+          name: strong_kernel-${{ env.SHORT_SHA }}
+          tag_name: ${{ github.run_id }}
+          body: |
+            <b>${{ steps.workspace.outputs.build_title }}</b>
+            <b>Kernel successfully built!</b>, took ${{ steps.build.outputs.elapsed_time }} seconds.
+
+            <b>Kernel tree</b>: ${{ github.event.inputs.KERNEL_TREE }}/tree/${{ github.event.inputs.KERNEL_TREE_BRANCH }}
+            <b>KernelSU</b>: ${{ steps.workspace.outputs.kernelsu }} (${{ github.event.inputs.WHICH_KSU }})
+            <b>SuSFS</b>: ${{ steps.workspace.outputs.susfs }}
+            <b>Toolchain</b>: Neutron Clang (${{ steps.setup-clang.outputs.clang-dir }})
+            <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

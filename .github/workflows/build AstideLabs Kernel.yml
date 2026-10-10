@@ -1,0 +1,336 @@
+name: Build AstideLabs Kernel - sm8250
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_TITLE:
+        description: 'Custom Build Title'
+        required: false
+        type: string
+        default: 'AstideLabs Kernel'
+      CODENAME:
+        description: 'Phone Codename'
+        default: 'munch'
+        required: true
+        type: string
+      ENABLE_KERNELSU:
+        description: 'Enable KernelSU'
+        type: boolean
+        default: true
+      WHICH_KSU:
+        type: choice
+        description: 'Choose KernelSU Variant'
+        default: 'SukiSU-Ultra'
+        options:
+          - 'BakaSU'
+          - 'SukiSU-Ultra'
+          - 'KernelSU-Next (Legacy)'
+          - 'backslashxx-KernelSU'
+          - 'RKSU (rsuntk)'
+          - 'XXKSU-SUSFS'
+      ENABLE_SUSFS:
+        description: 'Enable and Patch SuSFS'
+        type: boolean
+        default: true
+      CLANG_BRANCH:
+        description: 'ZyCromerZ Clang Release Tag'
+        required: true
+        default: '16.0.6-20260807-release'
+        type: string
+
+jobs:
+  build:
+    name: Build ${{ inputs.CODENAME }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Initialize environment and workspace
+        id: init
+        run: |
+          mkdir -p workspace
+          cd workspace
+          echo "workspace_dir=$(pwd)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(TZ='Asia/Ho_Chi_Minh' date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "start_time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y -qq \
+            build-essential git curl wget bison flex zip bc cpio \
+            libssl-dev libelf-dev libtfm-dev libc6-dev python3 \
+            python-is-python3 gcc-aarch64-linux-gnu device-tree-compiler \
+            dwarves zstd jq patch ccache libncurses-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ inputs.CODENAME }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ inputs.CODENAME }}-
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          mkdir -p ~/.ccache
+          ccache --set-config=max_size=5.0G
+          ccache --set-config=compression=true
+          ccache -z
+
+      - name: Setup ZyCromerZ Clang
+        id: setup-clang
+        working-directory: ${{ steps.init.outputs.workspace_dir }}
+        run: |
+          mkdir -p clang
+          cd clang
+          TAG="${{ inputs.CLANG_BRANCH }}"
+          TAR_NAME="Clang-16.0.6-20260807.tar.gz"
+          if [[ "$TAG" == *"16.0.6"* ]]; then
+            TAR_NAME="Clang-16.0.6-20260807.tar.gz"
+          else
+            TAR_NAME="Clang-${TAG}.tar.gz"
+          fi
+          
+          curl -LO "https://github.com/ZyCromerZ/Clang/releases/download/${TAG}/${TAR_NAME}" || \
+          curl -LO "https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz"
+          
+          tar -xzf *.tar.gz
+          rm -f *.tar.gz
+          cd ..
+          echo "clang_dir=$(pwd)/clang" >> "$GITHUB_OUTPUT"
+
+      - name: Clone AstideLabs kernel source
+        id: kernel
+        working-directory: ${{ steps.init.outputs.workspace_dir }}
+        run: |
+          git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git -b android17-aptusitu kernel_tree
+          echo "kernel_dir=$(pwd)/kernel_tree" >> "$GITHUB_OUTPUT"
+
+      - name: Setup KernelSU Variant
+        if: inputs.ENABLE_KERNELSU
+        working-directory: ${{ steps.kernel.outputs.kernel_dir }}
+        run: |
+          KSU_CHOICE="${{ inputs.WHICH_KSU }}"
+          echo "Setting up: ${KSU_CHOICE}"
+
+          case "$KSU_CHOICE" in
+            "SukiSU-Ultra")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s main
+              ;;
+            "XXKSU-SUSFS")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/zenwav/KernelSU-SUSFS/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/zenwav/KernelSU-SUSFS/refs/heads/master/kernel/setup.sh" | bash -s master
+              ;;
+            "RKSU (rsuntk)")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s v3.2.2-10-legacy
+              ;;
+            "backslashxx-KernelSU")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
+              ;;
+            "BakaSU")
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- main
+              ;;
+            *)
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/legacy/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/legacy/kernel/setup.sh" | bash -s -- legacy
+              ;;
+          esac
+
+          # Sửa các lỗi tương thích header và static initializer
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' {} + 2>/dev/null || true
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' {} + 2>/dev/null || true
+          find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
+            's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
+
+          # Vô hiệu hóa các file kiểm tra makefile của BakaSU
+          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "static_export_check.mk" -o -name "inline_hook_check.mk" -o -name "susfs_compat.mk" \) -exec truncate -s 0 {} + 2>/dev/null || true
+
+          # Bổ sung cờ include cho selinux headers (flask.h)
+          find drivers/kernelsu/ KernelSU/ -type f -name "Makefile" -exec sed -i \
+            '1i ccflags-y += -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include -I$(objtree)/security/selinux/include' {} + 2>/dev/null || true
+
+          if [ -f security/selinux/selinuxfs.c ]; then
+            grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
+              echo "EXPORT_SYMBOL(sel_handle_status_ops);" >> security/selinux/selinuxfs.c
+          fi
+
+      - name: Setup & Patch SuSFS
+        if: inputs.ENABLE_SUSFS
+        working-directory: ${{ steps.kernel.outputs.kernel_dir }}
+        run: |
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.19 susfs
+          SUSFS_DIR="$(pwd)/susfs"
+
+          cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/ 2>/dev/null || true
+          cp -f "${SUSFS_DIR}/kernel_patches/fs/sus_su.c" fs/ 2>/dev/null || true
+          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/"*.h include/linux/ 2>/dev/null || true
+          grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+
+          PATCH_FILE="${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch"
+          if [ -f "$PATCH_FILE" ]; then
+            patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || patch -p1 -N < "$PATCH_FILE" || true
+          fi
+
+          sed -i '/ksu_input_hook/d' drivers/input/input.c 2>/dev/null || true
+
+          if ! grep -q "susfs_last_fake_mnt_id" include/linux/sched.h; then
+            sed -i '/struct task_struct {/a #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_last_fake_mnt_id;\n#endif' include/linux/sched.h
+          fi
+
+          if [ -f fs/proc/task_mmu.c ]; then
+            grep -q "linux/susfs.h" fs/proc/task_mmu.c || sed -i '1i #include <linux/susfs.h>' fs/proc/task_mmu.c
+          fi
+
+          if [ -d KernelSU ]; then
+            pushd KernelSU
+            KSU_PATCH="${SUSFS_DIR}/ksu_patches/10_enable_susfs_for_ksu.patch"
+            if [ -f "$KSU_PATCH" ]; then
+              patch -p1 -N < "$KSU_PATCH" || git apply --3way "$KSU_PATCH" 2>/dev/null || true
+            fi
+            popd
+          fi
+
+          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
+          rm -rf susfs
+
+      - name: Build Kernel via build_kernel.sh
+        id: build
+        working-directory: ${{ steps.kernel.outputs.kernel_dir }}
+        run: |
+          # 1. Điều chỉnh đường dẫn toolchain trong build_kernel.sh về Clang đã chuẩn bị
+          sed -i 's|TOOLCHAIN_PATH=.*|TOOLCHAIN_PATH="${{ steps.setup-clang.outputs.clang_dir }}/bin"|' build_kernel.sh 2>/dev/null || true
+          
+          # 2. Khử xung đột đệ quy Kconfig
+          sed -i '/depends on OVERLAY_FS/d' arch/arm64/Kconfig 2>/dev/null || true
+          sed -i '/select OVERLAY_FS/d' drivers/kernelsu/Kconfig KernelSU/kernel/Kconfig 2>/dev/null || true
+
+          # 3. Chèn compatibility stubs cho các hook KernelSU/SuSFS nếu thiếu
+          cat << 'EOF' >> kernel/sys.c
+          struct inode; struct file; struct filename;
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { (void)inode; return 0; }
+          int __attribute__((weak)) ksu_input_hook(unsigned int type, unsigned int code, int value) { (void)type; (void)code; (void)value; return 0; }
+          int __attribute__((weak)) ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) { (void)type; (void)code; (void)value; return 0; }
+          int __attribute__((weak)) ksu_vfs_read_hook(struct file *file, char __user *buf, size_t count, loff_t *pos) { (void)file; (void)buf; (void)count; (void)pos; return 0; }
+          int __attribute__((weak)) ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr, size_t *count_ptr, loff_t **pos) { (void)file_ptr; (void)buf_ptr; (void)count_ptr; (void)pos; return 0; }
+          int __attribute__((weak)) ksu_execveat_hook(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) { (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags; return 0; }
+          int __attribute__((weak)) ksu_handle_execveat(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) { (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags; return 0; }
+          int __attribute__((weak)) ksu_handle_execveat_sucompat(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) { (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags; return 0; }
+          EOF
+
+          # 4. Kích hoạt Kconfig cho SuSFS trước khi script chạy hoặc điều chỉnh defconfig
+          if [ "${{ inputs.ENABLE_SUSFS }}" = "true" ]; then
+            DEFCONFIG="arch/arm64/configs/munch_defconfig"
+            [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/munch_defconfig"
+            if [ -f "$DEFCONFIG" ]; then
+              for opt in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
+                         CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                         CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SUS_OVERLAYFS CONFIG_KSU_SUSFS_SPOOF_UNAME \
+                         CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                         CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_SU; do
+                ./scripts/config --file "$DEFCONFIG" -e "$opt"
+              done
+            fi
+          fi
+
+          export PATH="${{ steps.setup-clang.outputs.clang_dir }}/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          chmod +x build_kernel.sh
+          
+          # Thực thi build script gốc của AstideLabs
+          bash build_kernel.sh
+
+      - name: Package AnyKernel3 Releases
+        working-directory: ${{ steps.kernel.outputs.kernel_dir }}
+        run: |
+          DIST_DIR="${{ steps.init.outputs.workspace_dir }}/dist"
+          mkdir -p "$DIST_DIR"
+
+          BUILD_DATE="${{ steps.init.outputs.build_date }}"
+          SUFFIX=""
+          if [ "${{ inputs.ENABLE_KERNELSU }}" = "false" ]; then
+            SUFFIX="${SUFFIX}-NOKSU"
+          else
+            KSU_TAG="$(echo "${{ inputs.WHICH_KSU }}" | sed 's/[ ()]/_/g' | sed 's/__*/_/g')"
+            SUFFIX="${SUFFIX}-${KSU_TAG}"
+          fi
+          [ "${{ inputs.ENABLE_SUSFS }}" = "true" ] && SUFFIX="${SUFFIX}-SUSFS"
+
+          # Tìm file zip đã được sinh ra bởi build_kernel.sh (nếu script có tính năng đóng gói AnyKernel3 sẵn)
+          GENERATED_ZIPS=$(find . -maxdepth 2 -name "*.zip")
+          if [ -n "$GENERATED_ZIPS" ]; then
+            echo "Found script-generated zips:"
+            for zipfile in $GENERATED_ZIPS; do
+              basename=$(basename "$zipfile")
+              cp -fv "$zipfile" "$DIST_DIR/${basename%.*}${SUFFIX}-${BUILD_DATE}.zip"
+            done
+          fi
+
+          # Nếu script build xuất Image vào out/ hoặc arch/arm64/boot/, chuẩn hóa gói thủ công 2 bản AOSP và MIUI
+          IMAGE_PATH=""
+          for p in out/arch/arm64/boot/Image arch/arm64/boot/Image out/Image; do
+            [ -f "$p" ] && IMAGE_PATH="$p" && break
+          done
+
+          if [ -n "$IMAGE_PATH" ]; then
+            echo "Packaging standalone flashable zips from $IMAGE_PATH..."
+            git clone --depth=1 https://github.com/re-noroi/anykernel3-test -b main AK3_Base
+            
+            for os in MIUI AOSP; do
+              cp -r AK3_Base "AK3_${os}"
+              sed -i 's/device.name1=alioth/device.name1=munch/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              sed -i 's/device.name2=aliothin/device.name2=munchin/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              sed -i 's/abort "Exiting to prevent flashing wrong battery variant."/# bypass/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              sed -i 's/abort "ERROR!!! Invalid or missing/# bypass/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              
+              cp -fv "$IMAGE_PATH" "AK3_${os}/Image"
+              find out/ arch/ -name "dtb.img" -exec cp -fv {} "AK3_${os}/dtb" \; 2>/dev/null || true
+              
+              if [ "$os" = "MIUI" ]; then
+                find out/ arch/ -name "dtbo.img" -exec cp -fv {} "AK3_${os}/dtbo.img" \; 2>/dev/null || true
+                sed -i 's/kernel.string=.*/kernel.string=AstideLabs Kernel (MIUI\/HyperOS)/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              else
+                rm -f "AK3_${os}/dtbo.img"
+                sed -i 's/kernel.string=.*/kernel.string=AstideLabs Kernel (AOSP)/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              fi
+
+              if [ "${{ inputs.ENABLE_SUSFS }}" = "true" ]; then
+                mkdir -p "AK3_${os}/susfs"
+                curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o "AK3_${os}/susfs/ksu_susfs" || true
+                chmod +x "AK3_${os}/susfs/ksu_susfs" 2>/dev/null || true
+                printf '\nif [ -f "$home/susfs/ksu_susfs" ]; then\n  for target in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do\n    [ -d "$target" ] && cp -f "$home/susfs/ksu_susfs" "$target/ksu_susfs" && chmod 755 "$target/ksu_susfs"\n  done\nfi\n' >> "AK3_${os}/anykernel.sh"
+              fi
+
+              ZIP_OUT="${DIST_DIR}/AstideLabs_kernel${SUFFIX}-${os}-munch-${BUILD_DATE}-v${{ github.run_number }}.zip"
+              (cd "AK3_${os}" && zip -r9 "$ZIP_OUT" . -x ".git*" -x "README*")
+            done
+          fi
+
+          ls -lh "$DIST_DIR"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          preserve_order: true
+          fail_on_unmatched_files: false
+          files: |
+            ${{ steps.init.outputs.workspace_dir }}/dist/*.zip
+            ${{ steps.kernel.outputs.kernel_dir }}/out/.config
+          name: AstideLabs Kernel - munch (${{ steps.init.outputs.build_date }})
+          tag_name: build-${{ steps.init.outputs.build_date }}-${{ github.run_number }}
+          body: |
+            ### AstideLabs Kernel sm8250 (munch)
+            - **Branch base:** <code>android17-aptusitu</code>
+            - **Build Date:** ${{ steps.init.outputs.build_date }}
+            - **KernelSU:** ${{ inputs.ENABLE_KERNELSU && inputs.WHICH_KSU || 'None' }}
+            - **SuSFS:** ${{ inputs.ENABLE_SUSFS && 'Enabled' || 'Disabled' }}
+            - **Compiler:** ZyCromerZ Clang ${{ inputs.CLANG_BRANCH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -240,9 +240,12 @@ jobs:
 
           SUSFS_DIR="$(pwd)/susfs"
 
-          cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/
-          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/susfs.h" include/linux/
-          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/sus_su.h" include/linux/ 2>/dev/null || true
+          # 1. Chép source file fs
+          cp -f "${SUSFS_DIR}/kernel_patches/fs/susfs.c" fs/ 2>/dev/null || true
+          cp -f "${SUSFS_DIR}/kernel_patches/fs/sus_su.c" fs/ 2>/dev/null || true
+
+          # 2. Chép toàn bộ header của SuSFS (susfs.h, sus_su.h, susfs_def.h,...)
+          cp -f "${SUSFS_DIR}/kernel_patches/include/linux/"*.h include/linux/ 2>/dev/null || true
 
           grep -q "susfs.o" fs/Makefile || echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
 
@@ -270,6 +273,7 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
+
 
       - name: Building kernel
         id: build

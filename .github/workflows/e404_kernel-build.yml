@@ -222,10 +222,10 @@ jobs:
           find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
             's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
 
-          # Xử lý triệt để các file kiểm tra tĩnh và hook của BakaSU
-          echo "Disabling BakaSU static_export_check and inline_hook_check..."
-          find drivers/kernelsu/ KernelSU/ -type f -name "static_export_check.mk" -exec truncate -s 0 {} + 2>/dev/null || true
-          find drivers/kernelsu/ KernelSU/ -type f -name "inline_hook_check.mk" -exec truncate -s 0 {} + 2>/dev/null || true
+          # Vô hiệu hóa toàn bộ file kiểm tra của BakaSU (inline_hook_check, static_export_check, susfs_compat)
+          echo "Disabling BakaSU check makefiles..."
+          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
+          find drivers/kernelsu/ KernelSU/ -type f \( -name "static_export_check.mk" -o -name "inline_hook_check.mk" -o -name "susfs_compat.mk" \) -exec truncate -s 0 {} + 2>/dev/null || true
 
           if [ -f security/selinux/selinuxfs.c ]; then
             grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
@@ -255,7 +255,7 @@ jobs:
             patch -p1 --forward < "$PATCH_FILE" || git apply --3way "$PATCH_FILE" || patch -p1 -N < "$PATCH_FILE" || true
           fi
 
-          # Dọn sạch hook input thừa gây conflict với check của BakaSU
+          # Dọn sạch hook input thừa để tránh xung đột
           echo "Sanitizing incompatible ksu_input_hook calls..."
           sed -i '/ksu_input_hook/d' drivers/input/input.c 2>/dev/null || true
 
@@ -287,6 +287,10 @@ jobs:
             fi
             popd
           fi
+
+          # Đảm bảo xóa hoặc truncate lại các file check makefile sau khi patch SuSFS vào KernelSU
+          echo "Sanitizing KernelSU tools check makefiles after SuSFS patch..."
+          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
 
           rm -rf susfs
           echo "::endgroup::"

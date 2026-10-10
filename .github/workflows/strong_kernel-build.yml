@@ -120,32 +120,35 @@ jobs:
 
           INPUT_TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
 
-          # 1. Tìm release tag mới nhất từ repo Neutron-Toolchains
+          # 1. Truy vấn release và lấy trực tiếp URL của asset .tar.zst
           if [ "$INPUT_TAG" = "latest" ] || [ -z "$INPUT_TAG" ]; then
-            echo "Querying latest tag from Neutron-Toolchains..."
-            TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/Neutron-Toolchains/clang-builds/releases/latest" | jq -r '.tag_name // empty')
-
-            # Nếu API /releases/latest trả về rỗng, lấy tag đầu tiên trong danh sách releases
-            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-              TAG=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/Neutron-Toolchains/clang-builds/releases" | jq -r '.[0].tag_name // empty')
-            fi
-
-            # Fallback lấy tag qua git ls-remote nếu GitHub API bị rate-limit
-            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-              TAG=$(git ls-remote --tags --refs https://github.com/Neutron-Toolchains/clang-builds.git | awk -F/ '{print $NF}' | sort -V | tail -n 1)
+            echo "Fetching latest release from Neutron-Toolchains/clang-build-catalogue..."
+            RELEASE_DATA=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest")
+            
+            # Fallback sang release đầu tiên nếu /latest trả về rỗng
+            if [ -z "$RELEASE_DATA" ] || [ "$(echo "$RELEASE_DATA" | jq -r '.message // empty')" = "Not Found" ]; then
+              RELEASE_DATA=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases" | jq -r '.[0]')
             fi
           else
-            TAG="$INPUT_TAG"
+            echo "Fetching release tag $INPUT_TAG from Neutron-Toolchains/clang-build-catalogue..."
+            RELEASE_DATA=$(curl -sL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/tags/${INPUT_TAG}")
           fi
 
-          echo "Selected Neutron Clang Tag: $TAG"
+          TAG=$(echo "$RELEASE_DATA" | jq -r '.tag_name // empty')
+          DOWNLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".tar.zst")) | .browser_download_url' | head -n 1)
 
-          # 2. Tải và giải nén trực tiếp file nén .tar.zst của tag đó
-          DOWNLOAD_URL="https://github.com/Neutron-Toolchains/clang-builds/releases/download/${TAG}/neutron-clang-${TAG}.tar.zst"
-          echo "Downloading from: $DOWNLOAD_URL"
+          echo "Selected Tag: $TAG"
+          echo "Download URL: $DOWNLOAD_URL"
 
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "Error: Could not find .tar.zst asset in release!"
+            exit 1
+          fi
+
+          # 2. Tải và giải nén trực tiếp vào thư mục
           aria2c -x 16 -s 16 -k 1M "$DOWNLOAD_URL" -o "neutron-clang.tar.zst" || \
           curl -sSL "$DOWNLOAD_URL" -o "neutron-clang.tar.zst"
 
@@ -155,6 +158,7 @@ jobs:
           cd ..
           echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
         working-directory: ${{ steps.workspace.outputs.workspace-folder }}
+
 
       - name: Display toolchain version
         run: |

@@ -60,7 +60,7 @@ jobs:
           echo "Kernel Tree: ${{ github.event.inputs.KERNEL_TREE }} (${{ github.event.inputs.KERNEL_TREE_BRANCH }})"
           echo "Codename: ${{ github.event.inputs.CODENAME }}"
           echo "Defconfig: ${{ github.event.inputs.DEFCONFIG }}"
-          echo "KernelSU: ${{ github.event.inputs.ENABLE_KERNELSU && 'Yes' \vert{}\vert{} 'No' }} (${{ github.event.inputs.WHICH_KSU }})"
+          echo "KernelSU: ${{ github.event.inputs.ENABLE_KERNELSU && 'Yes' || 'No' }} (${{ github.event.inputs.WHICH_KSU }})"
           echo "::endgroup::"
 
       - name: Initialize Workspace
@@ -69,7 +69,7 @@ jobs:
           mkdir -p workspace
           echo "workspace_dir=$GITHUB_WORKSPACE/workspace" >> $GITHUB_OUTPUT
           echo "start_time=$(date +\%s)" >> $GITHUB_OUTPUT
-          echo "build_title=${{ github.event.inputs.BUILD_TITLE \vert{}\vert{} github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
+          echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
 
       - name: Setup Build Environment
         run: |

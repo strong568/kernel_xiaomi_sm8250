@@ -24,7 +24,7 @@ on:
         type: string
       ANYKERNEL_URL:
         description: 'AnyKernel Url (leave blank if you dont want AnyKernel)'
-        default: 'https://github.com/nunkki/Anykernel3-Munch'
+        default: 'https://github.com/olzhas0986/Anykernel3'
         required: false
         type: string
       ANYKERNEL_BRANCH:
@@ -205,8 +205,8 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
               ;;
             *)
-              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s -- dev
+              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- --cleanup || true
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/refs/heads/next/kernel/setup.sh" | bash -s -- next
               ;;
           esac
 
@@ -256,7 +256,6 @@ jobs:
             sed -i '/struct task_struct {/a #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_last_fake_mnt_id;\n#endif' include/linux/sched.h
           fi
 
-
           # 3. Vá lỗi thiếu include susfs.h trong task_mmu.c
           if [ -f fs/proc/task_mmu.c ]; then
             echo "Patching include susfs.h in fs/proc/task_mmu.c..."
@@ -282,7 +281,6 @@ jobs:
 
           rm -rf susfs
           echo "::endgroup::"
-
 
       - name: Building kernel
         id: build
@@ -415,13 +413,25 @@ jobs:
         run: |
           mkdir -p ../dist
 
-          # 1. Clone AnyKernel3
+          # 1. Clone AnyKernel3 gốc
           git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3_Base
           cp -r AnyKernel3_Base AnyKernel3_MIUI
           cp -r AnyKernel3_Base AnyKernel3_AOSP
           rm -rf AnyKernel3_Base
 
-          # Tên hiển thị kernel
+          # Tải file anykernel.sh từ repo olzhas0986
+          echo "Downloading custom anykernel.sh from olzhas0986..."
+          curl -sSL "https://raw.githubusercontent.com/olzhas0986/Anykernel3/refs/heads/main/anykernel.sh" -o anykernel.sh.custom
+
+          # Cập nhật thông số cho cả 2 bản MIUI và AOSP
+          for dir in AnyKernel3_MIUI AnyKernel3_AOSP; do
+            cp -f anykernel.sh.custom "$dir/anykernel.sh"
+            # Cấu hình thiết bị munch
+            sed -i 's/device.name1=.*/device.name1=munch/g' "$dir/anykernel.sh"
+            sed -i 's/device.name2=.*/device.name2=munchin/g' "$dir/anykernel.sh"
+          done
+          rm -f anykernel.sh.custom
+
           sed -i 's/kernel.string=.*/kernel.string=Munch Kernel (HyperOS\/MIUI)/g' AnyKernel3_MIUI/anykernel.sh
           sed -i 's/kernel.string=.*/kernel.string=Munch Kernel (AOSP)/g' AnyKernel3_AOSP/anykernel.sh
 
@@ -472,7 +482,7 @@ jobs:
                   echo '      chmod 755 "$target_dir/ksu_susfs"'
                   echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
                   echo '    fi'
-                  echo '  done'
+                  done
                   echo 'fi'
                 } >> "$dir/anykernel.sh"
               fi
@@ -492,6 +502,7 @@ jobs:
           (cd AnyKernel3_AOSP && zip -r9 "../../dist/$NAME_AOSP" . -x "README*")
 
           ls -lh ../../dist/
+
 
       - name: Get short SHA
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"

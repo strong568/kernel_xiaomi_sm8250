@@ -52,7 +52,6 @@ on:
 
 jobs:
   build:
-    if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,6 +80,7 @@ jobs:
           echo "kernelsu=${{ inputs.ENABLE_KERNELSU && 'Yes' || 'No' }}" >> $GITHUB_OUTPUT
           echo "susfs=${{ inputs.ENABLE_SUSFS && 'Yes' || 'No' }}" >> $GITHUB_OUTPUT
           echo "build_title=${{ github.event.inputs.BUILD_TITLE || github.event.inputs.CODENAME }}" >> $GITHUB_OUTPUT
+
 
       - name: Prepare the build environment
         run: |

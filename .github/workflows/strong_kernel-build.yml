@@ -264,15 +264,14 @@ jobs:
           sed -i '/depends on OVERLAY_FS/d' arch/arm64/Kconfig 2>/dev/null || true
           sed -i '/select OVERLAY_FS/d' drivers/kernelsu/Kconfig KernelSU/kernel/Kconfig 2>/dev/null || true
 
-          # 2. Khắc phục thiếu symbol legacy hook KernelSU (devpts & input hook)
-          echo "Injecting weak compatibility stubs for legacy KSU hooks..."
+          # 2. Khắc phục thiếu symbol legacy hook KernelSU & SuSFS
+          echo "Injecting weak compatibility stubs for legacy KSU & SuSFS hooks..."
           cat << 'EOF' >> kernel/sys.c
 
-          // --- KernelSU legacy hook compatibility stubs ---
+          // --- KernelSU & SuSFS legacy hook compatibility stubs ---
           struct inode;
-          int ksu_handle_devpts(struct inode *inode);
-          int ksu_input_hook(unsigned int type, unsigned int code, int value);
-          int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
+          struct file;
+          struct filename;
 
           int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) {
               (void)inode;
@@ -284,6 +283,26 @@ jobs:
           }
           int __attribute__((weak)) ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) {
               (void)type; (void)code; (void)value;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_vfs_read_hook(struct file *file, char __user *buf, size_t count, loff_t *pos) {
+              (void)file; (void)buf; (void)count; (void)pos;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr, size_t *count_ptr, loff_t **pos) {
+              (void)file_ptr; (void)buf_ptr; (void)count_ptr; (void)pos;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_execveat_hook(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) {
+              (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_handle_execveat(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) {
+              (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags;
+              return 0;
+          }
+          int __attribute__((weak)) ksu_handle_execveat_sucompat(int *fd, struct filename **filename_user, void *__argv, void *__envp, int *flags) {
+              (void)fd; (void)filename_user; (void)__argv; (void)__envp; (void)flags;
               return 0;
           }
           EOF

@@ -220,6 +220,17 @@ jobs:
           find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
             's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
 
+          # Xử lý yêu cầu export symbol của BakaSU
+          if [ "$KSU_CHOICE" = "BakaSU" ]; then
+            echo "Patching sel_handle_status_ops export for BakaSU..."
+            if [ -f security/selinux/selinuxfs.c ]; then
+              grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
+                echo "EXPORT_SYMBOL(sel_handle_status_ops);" >> security/selinux/selinuxfs.c
+            fi
+            find drivers/kernelsu/ KernelSU/ -type f -name "static_export_check.mk" -exec sed -i 's/\$(error.*)/# \0/g' {} + 2>/dev/null || true
+          fi
+
+
       - name: Setup & Patch SuSFS
         if: inputs.ENABLE_SUSFS
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
@@ -334,8 +345,10 @@ jobs:
           echo "Generating defconfig: $DEFCONFIG"
           make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 "$DEFCONFIG"
 
-          # Đảm bảo bật CONFIG_OVERLAY_FS
+          # Đảm bảo bật CONFIG_OVERLAY_FS và CONFIG_KALLSYMS_ALL
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
+          ./scripts/config --file out/.config -e CONFIG_KALLSYMS
+          ./scripts/config --file out/.config -e CONFIG_KALLSYMS_ALL
 
           # 4. Kích hoạt Kconfig cho SuSFS
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then

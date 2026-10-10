@@ -114,23 +114,30 @@ jobs:
 
       - name: Download Neutron Clang
         id: setup-clang
-        working-directory: ${{ steps.workspace.outputs.workspace-folder }}
         run: |
-          TAG="${{ inputs.NEUTRON_CLANG_TAG }}"
+          mkdir -p clang-neutron
+          cd clang-neutron
+
+          TAG="${{ github.event.inputs.NEUTRON_CLANG_TAG }}"
+
+          # Tải công cụ chính thức antman của Neutron
+          curl -sSL "https://raw.githubusercontent.com/neutrons-project/antman/main/antman" -o antman
+          chmod +x antman
 
           if [ "$TAG" = "latest" ] || [ -z "$TAG" ]; then
-            echo "Fetching latest release tag from GitHub API..."
-            TAG=$(curl -sL https://api.github.com/repos/neutrons-project/clang-builds/releases/latest | jq -r '.tag_name')
+            echo "Syncing latest Neutron Clang build via antman..."
+            ./antman --sync
+          else
+            echo "Syncing Neutron Clang build with tag: $TAG via antman..."
+            ./antman --sync "$TAG"
           fi
 
-          echo "Selected Neutron Clang Tag: $TAG"
-          echo "clang-tag=$TAG" >> "$GITHUB_OUTPUT"
-          mkdir -p clang-neutron
+          # Tự động patch runtime/glibc cần thiết cho môi trường host
+          ./antman --patch=glibc
 
-          curl -sL "https://github.com/neutrons-project/clang-builds/releases/download/${TAG}/neutron-clang-${TAG}.tar.zst" \
-            | zstd -d | tar -xf - -C clang-neutron/
-
-          echo "clang-dir=$(pwd)/clang-neutron" >> "$GITHUB_OUTPUT"
+          cd ..
+          echo "clang-dir=$(pwd)/clang-neutron" >> $GITHUB_OUTPUT
+        working-directory: ${{ steps.workspace.outputs.workspace-folder }}
 
       - name: Display toolchain version
         run: |
@@ -236,6 +243,126 @@ jobs:
           make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 vendor/alioth_defconfig
 
           if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
+            echo "Enabling SuSFS Kconfig flags..."
+            for opt in \
+              CONFIG_KSU_SUSFS \
+              CONFIG_KSU_SUSFS_SUS_PATH \
+              CONFIG_KSU_SUSFS_SUS_MOUNT \
+              CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+              CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+              CONFIG_KSU_SUSFS_SUS_KSTAT \
+              CONFIG_KSU_SUSFS_SUS_OVERLAYFS \
+              CONFIG_KSU_SUSFS_SPOOF_UNAME \
+              CONFIG_KSU_SUSFS_ENABLE_LOG \
+              CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+              CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+              CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+              CONFIG_KSU_SUSFS_SUS_SU; do
+              ./scripts/config --file out/.config -e "$opt"
+            done
+
+            if grep -rq "path_umount" fs/ include/linux/ 2>/dev/null; then
+              ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_TRY_UMOUNT
+            else
+              ./scripts/config --file out/.config -d CONFIG_KSU_SUSFS_TRY_UMOUNT
+            fi
+
+            make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 olddefconfig
+          fi
+
+          make -j"$(nproc --all)" O=out \
+            CC="ccache clang" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            LLVM=1 \
+            LLVM_IAS=1
+
+          echo "::group::Ccache Stats"
+          ccache -s
+          echo "::endgroup::"
+
+          echo "elapsed_time=$(echo "$(date +%s) - ${{ steps.workspace.outputs.start_time }}" | bc)" >> "$GITHUB_OUTPUT"
+
+      - name: AnyKernel3
+        id: anykernel
+        if: success() && inputs.ANYKERNEL_URL != '' && inputs.ANYKERNEL_BRANCH != ''
+        continue-on-error: true
+        working-directory: ${{ steps.kernel.outputs.kernel-folder }}
+        run: |
+          git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3
+
+          if [ -f out/arch/arm64/boot/Image ]; then
+            cp -f out/arch/arm64/boot/Image AnyKernel3/ -v
+            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
+            test -f out/arch/arm64/boot/dtb.img && cp -v out/arch/arm64/boot/dtb.img AnyKernel3/dtb
+          elif [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp -f out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ -v
+            test -f out/arch/arm64/boot/dtbo.img && cp -v out/arch/arm64/boot/dtbo.img AnyKernel3/
+          fi
+
+          if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
+            echo "Fetching ksu_susfs userspace tool..."
+            mkdir -p AnyKernel3/susfs
+            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
+            chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
+
+            if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
+              {
+                echo ''
+                echo '# --- Auto install ksu_susfs tool ---'
+                echo 'if [ -f "$home/susfs/ksu_susfs" ]; then'
+                echo '  ui_print "  -> Installing ksu_susfs tool..."'
+                echo '  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do'
+                echo '    if [ -d "$target_dir" ]; then'
+                echo '      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"'
+                echo '      chmod 755 "$target_dir/ksu_susfs"'
+                echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
+                echo '    fi'
+                echo '  done'
+                echo 'fi'
+              } >> AnyKernel3/anykernel.sh
+            fi
+          fi
+
+          SUFFIX=""
+          [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"
+          [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ] && SUFFIX="${SUFFIX}-SUSFS"
+
+          name="strong_kernel${SUFFIX}-v${{ github.run_number }}.zip"
+          cd AnyKernel3
+          zip -r9 "$name" . -x "README*" "$name"
+          mv "$name" "${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/"
+          echo "zipname=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Get short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          preserve_order: true
+          fail_on_unmatched_files: false
+          files: |
+            ${{ steps.kernel.outputs.kernel-folder }}/out/.config
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz-dtb
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/Image.gz
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtb.img
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/dtbo.img
+            ${{ steps.kernel.outputs.kernel-folder }}/out/arch/arm64/boot/*.zip
+          name: strong_kernel-${{ env.SHORT_SHA }}
+          tag_name: ${{ github.run_id }}
+          body: |
+            <b>${{ steps.workspace.outputs.build_title }}</b>
+            <b>Kernel successfully built!</b>, took ${{ steps.build.outputs.elapsed_time }} seconds.
+
+            <b>Kernel tree</b>: ${{ inputs.KERNEL_TREE }}/tree/${{ inputs.KERNEL_TREE_BRANCH }}
+            <b>KernelSU</b>: ${{ steps.workspace.outputs.kernelsu }} (${{ inputs.WHICH_KSU }})
+            <b>SuSFS</b>: ${{ steps.workspace.outputs.susfs }}
+            <b>Toolchain</b>: Neutron Clang (${{ steps.setup-clang.outputs.clang-tag }})
+            <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}" ]; then
             echo "Enabling SuSFS Kconfig flags..."
             for opt in \
               CONFIG_KSU_SUSFS \

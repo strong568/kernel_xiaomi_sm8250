@@ -411,7 +411,8 @@ jobs:
         if: success() && inputs.ANYKERNEL_URL != '' && inputs.ANYKERNEL_BRANCH != ''
         working-directory: ${{ steps.kernel.outputs.kernel-folder }}
         run: |
-          mkdir -p ../dist
+          DIST_DIR="${{ steps.workspace.outputs.workspace-folder }}/dist"
+          mkdir -p "$DIST_DIR"
 
           # 1. Clone AnyKernel3 từ repo re-noroi
           git clone --recursive --depth=1 ${{ inputs.ANYKERNEL_URL }} -b ${{ inputs.ANYKERNEL_BRANCH }} AnyKernel3_Base
@@ -421,21 +422,16 @@ jobs:
 
           # 2. Patch anykernel.sh để thích ứng cho codename munch
           for dir in AnyKernel3_MIUI AnyKernel3_AOSP; do
-            # Đổi thiết bị sang munch / munchin
-            sed -i 's/device.name1=alioth/device.name1=munch/g' "$dir/anykernel.sh"
-            sed -i 's/device.name2=aliothin/device.name2=munchin/g' "$dir/anykernel.sh"
+            sed -i 's/device.name1=alioth/device.name1=munch/g' "$dir/anykernel.sh" 2>/dev/null || true
+            sed -i 's/device.name2=aliothin/device.name2=munchin/g' "$dir/anykernel.sh" 2>/dev/null || true
 
-            # Tắt device check nếu cần flash trên các rom đổi model
-            # sed -i 's/do.devicecheck=1/do.devicecheck=0/g' "$dir/anykernel.sh"
-
-            # Vô hiệu hóa khối kiểm tra pin/DTBO alioth để tránh abort khi flash trên munch
-            # (Chuyển khối if kiểm tra sideload / variant thành bypass an toàn)
-            sed -i 's/abort "Exiting to prevent flashing wrong battery variant."/# bypass battery abort/g' "$dir/anykernel.sh"
-            sed -i 's/abort "ERROR!!! Invalid or missing/# bypass dreamless abort/g' "$dir/anykernel.sh"
+            # Bypass các lệnh abort kiểm tra pin/dreamless của alioth
+            sed -i 's/abort "Exiting to prevent flashing wrong battery variant."/# bypass battery abort/g' "$dir/anykernel.sh" 2>/dev/null || true
+            sed -i 's/abort "ERROR!!! Invalid or missing/# bypass dreamless abort/g' "$dir/anykernel.sh" 2>/dev/null || true
           done
 
-          sed -i 's/kernel.string=.*/kernel.string=e404 Kernel (HyperOS\/MIUI)/g' AnyKernel3_MIUI/anykernel.sh
-          sed -i 's/kernel.string=.*/kernel.string=e404 Kernel (AOSP)/g' AnyKernel3_AOSP/anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=e404 Kernel (HyperOS\/MIUI)/g' AnyKernel3_MIUI/anykernel.sh 2>/dev/null || true
+          sed -i 's/kernel.string=.*/kernel.string=e404 Kernel (AOSP)/g' AnyKernel3_AOSP/anykernel.sh 2>/dev/null || true
 
           # 3. Sao chép Kernel Image thực tế
           IMAGE_PATH=""
@@ -484,7 +480,7 @@ jobs:
                   echo '      chmod 755 "$target_dir/ksu_susfs"'
                   echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true'
                   echo '    fi'
-                  echo '  done'
+                  done
                   echo 'fi'
                 } >> "$dir/anykernel.sh"
               fi
@@ -496,14 +492,14 @@ jobs:
           [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"
           [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ] && SUFFIX="${SUFFIX}-SUSFS"
 
-          # 5. Đóng gói ZIP kèm hậu tố -stk để vượt qua bộ lọc tên zip của AnyKernel
+          # 5. Đóng gói ZIP (loại trừ .git để file zip gọn nhẹ)
           NAME_MIUI="strong_e404_kernel${SUFFIX}-HyperOS_MIUI-stk-v${{ github.run_number }}.zip"
           NAME_AOSP="strong_e404_kernel${SUFFIX}-AOSP-stk-v${{ github.run_number }}.zip"
 
-          (cd AnyKernel3_MIUI && zip -r9 "../../dist/$NAME_MIUI" . -x "README*")
-          (cd AnyKernel3_AOSP && zip -r9 "../../dist/$NAME_AOSP" . -x "README*")
+          (cd AnyKernel3_MIUI && zip -r9 "$DIST_DIR/$NAME_MIUI" . -x "README*" -x ".git*" -x ".git/*")
+          (cd AnyKernel3_AOSP && zip -r9 "$DIST_DIR/$NAME_AOSP" . -x "README*" -x ".git*" -x ".git/*")
 
-          ls -lh ../../dist/
+          ls -lh "$DIST_DIR"
 
       - name: Get short SHA
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"

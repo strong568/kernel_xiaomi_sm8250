@@ -296,20 +296,32 @@ jobs:
             if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
               cat << 'EOF' >> AnyKernel3/anykernel.sh
 
-# --- Auto install ksu_susfs tool ---
-if [ -f "$home/susfs/ksu_susfs" ]; then
-  ui_print "  -> Installing ksu_susfs tool..."
-  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do
-    if [ -d "$target_dir" ]; then
-      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"
-      chmod 755 "$target_dir/ksu_susfs"
-      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true
-    fi
-  done
-fi
-EOF
+          # Tải và nhúng userspace tool ksu_susfs vào AnyKernel3 nếu bật SuSFS
+          if [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ]; then
+            echo "Fetching ksu_susfs userspace tool..."
+            mkdir -p AnyKernel3/susfs
+            
+            # Tải binary ksu_susfs arm64 prebuilt từ nhánh repo chính
+            curl -sSL "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-4.19/kernel_patches/tools/ksu_susfs_arm64" -o AnyKernel3/susfs/ksu_susfs || true
+            chmod +x AnyKernel3/susfs/ksu_susfs 2>/dev/null || true
+
+            # Chèn script tự động cài đặt ksu_susfs vào anykernel.sh khi flash
+            if [ -f AnyKernel3/anykernel.sh ] && [ -f AnyKernel3/susfs/ksu_susfs ]; then
+              echo '' >> AnyKernel3/anykernel.sh
+              echo '# --- Auto install ksu_susfs tool ---' >> AnyKernel3/anykernel.sh
+              echo 'if [ -f "$home/susfs/ksu_susfs" ]; then' >> AnyKernel3/anykernel.sh
+              echo '  ui_print "  -> Installing ksu_susfs tool..."' >> AnyKernel3/anykernel.sh
+              echo '  for target_dir in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do' >> AnyKernel3/anykernel.sh
+              echo '    if [ -d "$target_dir" ]; then' >> AnyKernel3/anykernel.sh
+              echo '      cp -f "$home/susfs/ksu_susfs" "$target_dir/ksu_susfs"' >> AnyKernel3/anykernel.sh
+              echo '      chmod 755 "$target_dir/ksu_susfs"' >> AnyKernel3/anykernel.sh
+              echo '      chown root:root "$target_dir/ksu_susfs" 2>/dev/null || true' >> AnyKernel3/anykernel.sh
+              echo '    fi' >> AnyKernel3/anykernel.sh
+              echo '  done' >> AnyKernel3/anykernel.sh
+              echo 'fi' >> AnyKernel3/anykernel.sh
             fi
           fi
+
 
           SUFFIX=""
           [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ] && SUFFIX="${SUFFIX}-NOKSU"

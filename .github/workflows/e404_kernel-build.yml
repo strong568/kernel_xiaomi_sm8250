@@ -50,7 +50,7 @@ on:
       WHICH_KSU:
         type: choice
         description: 'Choose the fork of KSU to use'
-        default: 'BakaSU'
+        default: 'SukiSU-Ultra'
         options:
           - KernelSU-Next (Legacy)
           - KSU-Next (rifsxd)
@@ -58,7 +58,6 @@ on:
           - RKSU (rsuntk)
           - XXKSU-SUSFS
           - backslashxx-KernelSU
-          - BakaSU
           - KOWX712-KernelSU
 
 jobs:
@@ -197,10 +196,6 @@ jobs:
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup || true
               curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
               ;;
-            "BakaSU")
-              [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- --cleanup || true
-              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/refs/heads/main/kernel/setup.sh" | bash -s -- main
-              ;;
             "KOWX712-KernelSU")
               [ -d KernelSU ] && curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s -- --cleanup || true
               curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/refs/heads/master/kernel/setup.sh" | bash -s master
@@ -225,32 +220,6 @@ jobs:
           echo "Patching lsm_hooks_list.c static initializer..."
           find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
             's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
-
-          # Vá lỗi redefinition selinux_inode và selinux_cred riêng cho BakaSU
-          echo "Patching BakaSU selinux helper redefinitions in kernel_compat.h..."
-          find drivers/kernelsu/ KernelSU/ -type f -name "kernel_compat.h" -exec python3 -c '
-          import re, sys
-          path = sys.argv[1]
-          with open(path, "r") as f:
-              content = f.read()
-          content = re.sub(
-              r"(static\s+inline\s+struct\s+inode_security_struct\s*\*selinux_inode\s*\([^)]*\)\s*\{[^}]*\})",
-              r"/* \1 */",
-              content
-          )
-          content = re.sub(
-              r"(static\s+inline\s+struct\s+task_security_struct\s*\*selinux_cred\s*\([^)]*\)\s*\{[^}]*\})",
-              r"/* \1 */",
-              content
-          )
-          with open(path, "w") as f:
-              f.write(content)
-          ' {} + 2>/dev/null || true
-
-          # Vô hiệu hóa toàn bộ file kiểm tra của BakaSU
-          echo "Disabling BakaSU check makefiles..."
-          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
-          find drivers/kernelsu/ KernelSU/ -type f \( -name "static_export_check.mk" -o -name "inline_hook_check.mk" -o -name "susfs_compat.mk" \) -exec truncate -s 0 {} + 2>/dev/null || true
 
           if [ -f security/selinux/selinuxfs.c ]; then
             grep -q "EXPORT_SYMBOL(sel_handle_status_ops)" security/selinux/selinuxfs.c || \
@@ -311,10 +280,6 @@ jobs:
             fi
             popd
           fi
-
-          # Đảm bảo xóa hoặc truncate lại các file check makefile sau khi patch SuSFS vào KernelSU
-          echo "Sanitizing KernelSU tools check makefiles after SuSFS patch..."
-          find drivers/kernelsu/ KernelSU/ -type f -path "*/tools/*.mk" -exec truncate -s 0 {} + 2>/dev/null || true
 
           rm -rf susfs
           echo "::endgroup::"
@@ -429,7 +394,6 @@ jobs:
             # Sinh sẵn các header selinux (flask.h, av_permissions.h)
             make O=out CC="ccache clang" LLVM=1 LLVM_IAS=1 security/selinux/
 
-            # Copy các header vừa sinh sang thư mục gốc để BakaSU luôn tìm thấy
             mkdir -p security/selinux/include
             cp -f out/security/selinux/flask.h security/selinux/include/ 2>/dev/null || true
             cp -f out/security/selinux/av_permissions.h security/selinux/include/ 2>/dev/null || true

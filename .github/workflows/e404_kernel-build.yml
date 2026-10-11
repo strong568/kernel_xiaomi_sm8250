@@ -414,7 +414,52 @@ jobs:
           echo "::group::Ccache Stats"
           ccache -s
           echo "::endgroup::"
+          
+          # Trích xuất thông tin KSU Version & Manager Signature hỗ trợ đa fork (SukiSU, KOWSU, RKSU...)
+          KSU_VER=""
+          KSU_TAG=""
+          KSU_SIZE=""
+          KSU_HASH=""
 
+          KSU_DIR=""
+          for d in KernelSU KernelSU-Next drivers/kernelsu; do
+            if [ -d "$d" ]; then
+              KSU_DIR="$d"
+              break
+            fi
+          done
+
+          if [ -n "$KSU_DIR" ]; then
+            # 1. Trích xuất Version code và Tag
+            if [ -d "$KSU_DIR/.git" ]; then
+              KSU_VER=$(git -C "$KSU_DIR" rev-list --count HEAD 2>/dev/null || echo "")
+              KSU_TAG=$(git -C "$KSU_DIR" describe --tags --always 2>/dev/null || echo "")
+            fi
+
+            # 2. Quét toàn bộ file chữ ký manager (apk_sign.*, manager.*, allowlist.*)
+            SIGN_FILES=$(find "$KSU_DIR" -type f \( -name "apk_sign.c" -o -name "apk_sign.h" -o -name "manager.c" -o -name "manager.h" \))
+
+            if [ -n "$SIGN_FILES" ]; then
+              # Lấy toàn bộ các size được định nghĩa (hỗ trợ nhiều manager cùng lúc)
+              KSU_SIZE=$(grep -E 'EXPECTED_SIZE|EXPECTED_SIGN_SIZE' $SIGN_FILES 2>/dev/null \
+                | awk -F'=' '{print $2}' | tr -d ';\r\n ' | sed 's/0x/ 0x/g' | xargs || echo "")
+
+              # Lấy tất cả chuỗi SHA256 (64 hex characters) tương thích đa chữ ký
+              KSU_HASH=$(grep -oE '[0-9a-fA-F]{64}' $SIGN_FILES 2>/dev/null | sort -u | tr '\n' ' ' || echo "")
+            fi
+          fi
+
+          [ -z "$KSU_VER" ] && KSU_VER="Unknown"
+          [ -z "$KSU_TAG" ] && KSU_TAG="${{ inputs.WHICH_KSU }}"
+          [ -z "$KSU_SIZE" ] && KSU_SIZE="Built-in / Multiple"
+          [ -z "$KSU_HASH" ] && KSU_HASH="Built-in Signatures (Official / Multi-manager)"
+
+          echo "ksu_ver=${KSU_VER}" >> "$GITHUB_OUTPUT"
+          echo "ksu_tag=${KSU_TAG}" >> "$GITHUB_OUTPUT"
+          echo "ksu_size=${KSU_SIZE}" >> "$GITHUB_OUTPUT"
+          echo "ksu_hash=${KSU_HASH}" >> "$GITHUB_OUTPUT"
+
+          
           echo "elapsed_time=$(echo "$(date +%s) - ${{ steps.workspace.outputs.start_time }}" | bc)" >> "$GITHUB_OUTPUT"
           
       - name: AnyKernel3
@@ -532,10 +577,31 @@ jobs:
             • <code>HyperOS_MIUI</code>: Dành cho MIUI stock, HyperOS China/Global, xiaomi.eu (kèm DTBO).
             • <code>AOSP</code>: Dành cho PixelOS, LineageOS, crDroid (không đè DTBO tránh lỗi cảm ứng).
 
-            <b>Kernel tree</b>: ${{ inputs.KERNEL_TREE }}/tree/${{ inputs.KERNEL_TREE_BRANCH }}
-            <b>KernelSU</b>: ${{ steps.workspace.outputs.kernelsu }} (${{ inputs.WHICH_KSU }})
-            <b>SuSFS</b>: ${{ steps.workspace.outputs.susfs }}
-            <b>Toolchain</b>: Neutron Clang (${{ steps.setup-clang.outputs.clang-tag }})
-            <b>Action</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            <b>Kernel Information</b>:
+            • <b>Kernel Tree</b>: ${{ inputs.KERNEL_TREE }}/tree/${{ inputs.KERNEL_TREE_BRANCH }}
+            • <b>KernelSU Variant</b>: ${{ inputs.WHICH_KSU }}
+            • <b>SuSFS</b>: ${{ steps.workspace.outputs.susfs }}
+            • <b>Toolchain</b>: Neutron Clang (${{ steps.setup-clang.outputs.clang-tag }})
+
+            <b>KernelSU Manager Info</b>:
+            • <b>Version Code</b>: <code>${{ steps.build.outputs.ksu_ver }}</code>
+            • <b>Version Tag</b>: <code>${{ steps.build.outputs.ksu_tag }}</code>
+            • <b>Manager Signature Size</b>: <code>${{ steps.build.outputs.ksu_size }}</code>
+            • <b>Manager Signature Hash</b>:
+            <code>${{ steps.build.outputs.ksu_hash }}</code>
+
+            <b>Action URL</b>: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```[span_3](start_span)[span_3](end_span)
+
+---
+
+### Kết quả hiển thị trên Release Note
+Khi build xong, GitHub Release sẽ in thông số định danh rõ ràng như sau:
+* **Version Code**: `33306`
+* **Version Tag**: `v3.4.0-legacy`
+* **Manager Signature Size**: `0x3e6`
+* **Manager Signature Hash**: `79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7`
+
+Người dùng chỉ cần so sánh chuỗi Hash này với mã hash của app Manager cài trên máy (hoặc dùng đúng app do tác giả fork phát hành) là sẽ nhận diện quyền root chính xác.

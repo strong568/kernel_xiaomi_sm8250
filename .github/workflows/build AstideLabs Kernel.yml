@@ -8,11 +8,22 @@ on:
         required: false
         type: string
         default: 'AstideLabs Kernel'
+        
       CODENAME:
         description: 'Phone Codename'
         default: 'munch'
         required: true
         type: string
+        
+      TARGET_OS:
+        type: choice
+        description: 'Target OS Type'
+        default: 'both'
+        options:
+          - 'both'
+          - 'miui'
+          - 'aosp'
+          
       ENABLE_KERNELSU:
         description: 'Enable KernelSU'
         type: boolean
@@ -205,8 +216,8 @@ jobs:
         working-directory: ${{ steps.kernel.outputs.kernel_dir }}
         run: |
           # 1. Điều chỉnh đường dẫn toolchain trong build_kernel.sh về Clang đã chuẩn bị
-          sed -i 's|TOOLCHAIN_PATH=.*|TOOLCHAIN_PATH="${{ steps.setup-clang.outputs.clang_dir }}/bin"|' build_kernel.sh 2>/dev/null || true
-          
+          sed -i 's|^TOOLCHAIN_BIN=.*|TOOLCHAIN_BIN="${{ steps.setup-clang.outputs.clang_dir }}/bin"|' build_kernel.sh
+
           # 2. Khử xung đột đệ quy Kconfig
           sed -i '/depends on OVERLAY_FS/d' arch/arm64/Kconfig 2>/dev/null || true
           sed -i '/select OVERLAY_FS/d' drivers/kernelsu/Kconfig KernelSU/kernel/Kconfig 2>/dev/null || true
@@ -226,8 +237,8 @@ jobs:
 
           # 4. Kích hoạt Kconfig cho SuSFS trước khi script chạy hoặc điều chỉnh defconfig
           if [ "${{ inputs.ENABLE_SUSFS }}" = "true" ]; then
-            DEFCONFIG="arch/arm64/configs/munch_defconfig"
-            [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/munch_defconfig"
+            DEFCONFIG="arch/arm64/configs/${{ inputs.CODENAME }}_defconfig"
+            [ ! -f "$DEFCONFIG" ] && DEFCONFIG="arch/arm64/configs/vendor/${{ inputs.CODENAME }}_defconfig"
             if [ -f "$DEFCONFIG" ]; then
               for opt in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
                          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
@@ -244,8 +255,20 @@ jobs:
           export SUBARCH=arm64
           chmod +x build_kernel.sh
           
-          # Thực thi build script gốc của AstideLabs
-          bash build_kernel.sh
+          # Cấu hình cờ KSU
+          KSU_FLAG=""
+          if [ "${{ inputs.ENABLE_KERNELSU }}" = "true" ]; then
+            KSU_FLAG="ksu"
+          fi
+
+          # Cấu hình cờ Target OS
+          OS_FLAG=""
+          if [ "${{ inputs.TARGET_OS }}" != "both" ]; then
+            OS_FLAG="${{ inputs.TARGET_OS }}"
+          fi
+
+          # Thực thi script build với các cờ đã thiết lập
+          bash build_kernel.sh "${{ inputs.CODENAME }}" $KSU_FLAG $OS_FLAG
 
       - name: Package AnyKernel3 Releases
         working-directory: ${{ steps.kernel.outputs.kernel_dir }}
@@ -283,10 +306,17 @@ jobs:
             echo "Packaging standalone flashable zips from $IMAGE_PATH..."
             git clone --depth=1 https://github.com/re-noroi/anykernel3-test -b main AK3_Base
             
-            for os in MIUI AOSP; do
+            TARGETS="MIUI AOSP"
+            if [ "${{ inputs.TARGET_OS }}" = "miui" ]; then
+              TARGETS="MIUI"
+            elif [ "${{ inputs.TARGET_OS }}" = "aosp" ]; then
+              TARGETS="AOSP"
+            fi
+
+            for os in $TARGETS; do
               cp -r AK3_Base "AK3_${os}"
-              sed -i 's/device.name1=alioth/device.name1=munch/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
-              sed -i 's/device.name2=aliothin/device.name2=munchin/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              sed -i "s/device.name1=alioth/device.name1=${{ inputs.CODENAME }}/g" "AK3_${os}/anykernel.sh" 2>/dev/null || true
+              sed -i "s/device.name2=aliothin/device.name2=${{ inputs.CODENAME }}in/g" "AK3_${os}/anykernel.sh" 2>/dev/null || true
               sed -i 's/abort "Exiting to prevent flashing wrong battery variant."/# bypass/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
               sed -i 's/abort "ERROR!!! Invalid or missing/# bypass/g' "AK3_${os}/anykernel.sh" 2>/dev/null || true
               
@@ -308,9 +338,10 @@ jobs:
                 printf '\nif [ -f "$home/susfs/ksu_susfs" ]; then\n  for target in /data/adb/ksu/bin /data/adb/ap/bin /data/adb/bin; do\n    [ -d "$target" ] && cp -f "$home/susfs/ksu_susfs" "$target/ksu_susfs" && chmod 755 "$target/ksu_susfs"\n  done\nfi\n' >> "AK3_${os}/anykernel.sh"
               fi
 
-              ZIP_OUT="${DIST_DIR}/AstideLabs_kernel${SUFFIX}-${os}-munch-${BUILD_DATE}-v${{ github.run_number }}.zip"
+              ZIP_OUT="${DIST_DIR}/AstideLabs_kernel${SUFFIX}-${os}-${{ inputs.CODENAME }}-${BUILD_DATE}-v${{ github.run_number }}.zip"
               (cd "AK3_${os}" && zip -r9 "$ZIP_OUT" . -x ".git*" -x "README*")
             done
+
           fi
 
           ls -lh "$DIST_DIR"

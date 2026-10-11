@@ -50,7 +50,7 @@ on:
       WHICH_KSU:
         type: choice
         description: 'Choose the fork of KSU to use'
-        default: 'backslashxx-KernelSU'
+        default: 'BakaSU'
         options:
           - KernelSU-Next (Legacy)
           - KSU-Next (rifsxd)
@@ -225,6 +225,27 @@ jobs:
           echo "Patching lsm_hooks_list.c static initializer..."
           find drivers/kernelsu/ KernelSU/ -type f -name "lsm_hooks_list.c" -exec sed -i \
             's/static typeof(security_setprocattr) \*ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);/static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = NULL;/g' {} + 2>/dev/null || true
+
+          # Vá lỗi redefinition selinux_inode và selinux_cred riêng cho BakaSU
+          echo "Patching BakaSU selinux helper redefinitions in kernel_compat.h..."
+          find drivers/kernelsu/ KernelSU/ -type f -name "kernel_compat.h" -exec python3 -c '
+          import re, sys
+          path = sys.argv[1]
+          with open(path, "r") as f:
+              content = f.read()
+          content = re.sub(
+              r"(static\s+inline\s+struct\s+inode_security_struct\s*\*selinux_inode\s*\([^)]*\)\s*\{[^}]*\})",
+              r"/* \1 */",
+              content
+          )
+          content = re.sub(
+              r"(static\s+inline\s+struct\s+task_security_struct\s*\*selinux_cred\s*\([^)]*\)\s*\{[^}]*\})",
+              r"/* \1 */",
+              content
+          )
+          with open(path, "w") as f:
+              f.write(content)
+          ' {} + 2>/dev/null || true
 
           # Vô hiệu hóa toàn bộ file kiểm tra của BakaSU
           echo "Disabling BakaSU check makefiles..."
@@ -501,20 +522,18 @@ jobs:
             rm -rf susfs_tool
           fi
 
-          # Lấy ngày hiện tại theo giờ UTC (hoặc đổi thành TZ="Asia/Ho_Chi_Minh" date +%Y%m%d nếu muốn theo giờ VN)
           BUILD_DATE=$(TZ="Asia/Ho_Chi_Minh" date +%Y%m%d)
 
           SUFFIX=""
           if [ "${{ steps.workspace.outputs.kernelsu }}" = "No" ]; then
             SUFFIX="${SUFFIX}-NOKSU"
           else
-            # Chuẩn hóa tên variant (thay khoảng trắng và dấu ngoặc để tên file zip không bị lỗi ký tự đặc biệt)
             KSU_TAG="$(echo "${{ inputs.WHICH_KSU }}" | sed 's/[ ()]/_/g' | sed 's/__*/_/g')"
             SUFFIX="${SUFFIX}-${KSU_TAG}"
           fi
           [ "${{ steps.workspace.outputs.susfs }}" = "Yes" ] && SUFFIX="${SUFFIX}-SUSFS"
 
-          # 5. Đóng gói ZIP kèm ngày build
+          # 5. Đóng gói ZIP
           NAME_MIUI="strong_e404_kernel${SUFFIX}-HyperOS_MIUI-stk-${BUILD_DATE}-v${{ github.run_number }}.zip"
           NAME_AOSP="strong_e404_kernel${SUFFIX}-AOSP-stk-${BUILD_DATE}-v${{ github.run_number }}.zip"
 

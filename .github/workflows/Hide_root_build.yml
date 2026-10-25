@@ -138,7 +138,8 @@ jobs:
           elif [[ "${{ github.event.inputs.VARIANT }}" == "oplus-variant" ]]; then
             EXTRA="-oplus"
           fi
-          sed -i -e "s/CONFIG_LOCALVERSION=\"-FakeDreamer\"/CONFIG_LOCALVERSION=\"${{ github.event.inputs.CUSTOM_SED }}${EXTRA}\/" arch/arm64/configs/vendor/munch_defconfig
+          sed -i 's/CONFIG_LOCALVERSION="-FakeDreamer"/CONFIG_LOCALVERSION="'"${{ github.event.inputs.CUSTOM_SED }}${EXTRA}"'"/' arch/arm64/configs/vendor/munch_defconfig
+
       
       - name: Remove KSU (Apply only for kernel 2)
         if: matrix.kernel == 2

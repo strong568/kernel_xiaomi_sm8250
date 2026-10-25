@@ -46,7 +46,7 @@ static inline void *old_kvrealloc(const void *p, size_t oldsize, size_t newsize,
 	newp = kvmalloc(newsize, flags);
 	if (!newp)
 		return nullptr;
-	__builtin_memcpy(newp, p, oldsize);
+	memcpy(newp, p, oldsize);
 	kvfree(p);
 	return newp;
 }
@@ -368,6 +368,41 @@ found:;
 	return addr;
 }
 
+// NOTE: absolute minimum compat, just to appease API.
+static int kallsyms_lookup_batched(const char *const *names, unsigned long *addrs, u32 count)
+{
+	int resolved = 0;
+	u32 i = 0;
+
+	if (!names || !addrs)
+		return -EINVAL;
+
+loop_start:
+	if (!names[i])
+		goto next;
+
+	addrs[i] = (unsigned long)kallsyms_lookup_retry(names[i]);
+	if (!addrs[i])
+		goto next;
+
+	if (!is_module_address(addrs[i])) {
+		addrs[i] = 0; // null module address
+		goto next;
+	}
+
+	resolved++;
+next:
+	i++;
+	if (i < count)
+		goto loop_start;
+
+	return resolved;
+}
+
+// compat to official ksu
+#define find_kernel_symbol_exact 	kallsyms_lookup_retry
+#define ksu_lookup_kernel_symbols	kallsyms_lookup_batched
+
 // ksu_get_ksym_size, return symbol size, return retfail if fail.
 static noinline size_t ksu_get_ksym_size(uintptr_t symbol_addr, size_t retfail)
 {
@@ -433,8 +468,8 @@ static noinline void dotted_kallsyms_destroy_hash_array(void)
 	kallsyms_hash_array_entry_count = 0;
 	kallsyms_hash_array_capacity = 0;
 
-	const char *hw = "Hello, world!";
-	pr_info("chibihash64: '%s' #: 0x%llx \n", hw, chibihash64_wrapper(hw));
+	constexpr char hw[] = "Hello, world!";
+	pr_info("chibihash64: '%s' #: 0x%llx \n", hw, chibihash64(hw, sizeof(hw) - 1, 0ULL));
 
 }
 

@@ -59,10 +59,10 @@ on:
         type: boolean
         default: true
       ENABLE_NOMOUNT:
-        description: '[Extra] Enable NoMount support (Nên BẬT để hỗ trợ ẩn root ksu / magisk với ứng dụng ngân hàng)'
+        description: '[Extra] Enable NoMount support (BẬT (full_lto) là treo boot animation)'
         required: true
         type: boolean
-        default: true
+        default: false
 
       ENABLE_RW_SWAPPINESS:
         description: '[Extra] Allow modification of swappiness'

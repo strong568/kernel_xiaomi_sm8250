@@ -140,7 +140,6 @@ jobs:
           fi
           sed -i 's/CONFIG_LOCALVERSION="-FakeDreamer"/CONFIG_LOCALVERSION="'"${{ github.event.inputs.CUSTOM_SED }}${EXTRA}"'"/' arch/arm64/configs/vendor/munch_defconfig
 
-      
       - name: Remove KSU (Apply only for kernel 2)
         if: matrix.kernel == 2
         run: |
@@ -232,6 +231,63 @@ jobs:
           export KBUILD_BUILD_TIMESTAMP="$(TZ=UTC-7 date)"
           cd kernel_tree
           make O=out vendor/munch_defconfig
+
+          # --- HÀM TỰ ĐỘNG CHÈN CẤU HÌNH VÀO FILE .CONFIG ĐẦY ĐỦ 6000 DÒNG ---
+          apply_anti_detection() {
+              local CONFIG_FILE="out/.config"
+              chmod +x ./scripts/config
+
+              if [[ "${{ matrix.kernel }}" != "2" ]]; then
+                  echo "[*] Injecting Anti-Detection KSU + SuSFS Configuration (Pass VCB, MBBank, VNeID)..."
+                  ./scripts/config --file "$CONFIG_FILE" \
+                      -e KSU \
+                      -e KSU_SUSFS \
+                      -e KSU_MULTI_MANAGER_SUPPORT \
+                      -e THREAD_INFO_IN_TASK \
+                      -d KSU_DEBUG \
+                      -d KSU_KPROBES_HOOK \
+                      -d KSU_TRACEPOINT_HOOK \
+                      -d KSU_MANUAL_HOOK \
+                      -d KSU_DISABLE_MANAGER \
+                      -d KSU_DISABLE_POLICY \
+                      -e KSU_SUSFS_SUS_PATH \
+                      -e KSU_SUSFS_SUS_MOUNT \
+                      -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+                      -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+                      -e KSU_SUSFS_SUS_KSTAT \
+                      -e KSU_SUSFS_SPOOF_UNAME \
+                      -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                      -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+                      -e KSU_SUSFS_OPEN_REDIRECT \
+                      -e KSU_SUSFS_SUS_MAP \
+                      -d KSU_SUSFS_ENABLE_LOG \
+                      -d KSU_SUSFS_SUS_SU \
+                      -d KSU_SUSFS_SUS_OVERLAYFS
+              fi
+
+              # --- CÁC CỜ HARDENING KERNEL BẮT BUỘC ĐỂ VƯỢT QUA VCB, MBBANK, VNEID ---
+              echo "[*] Hardening Kernel Configuration (Pass VCB, MBBank, VNeID)..."
+              ./scripts/config --file "$CONFIG_FILE" \
+                  -d KPROBES \
+                  -d HAVE_KPROBES \
+                  -d KPROBE_EVENTS \
+                  -d UPROBE_EVENTS \
+                  -d KALLSYMS_ALL \
+                  -e SECURITY_SELINUX \
+                  -d SECURITY_SELINUX_DEVELOP \
+                  -d SECURITY_SELINUX_PERMISSIVE_DONTAUDIT \
+                  -d DEBUG_FS \
+                  -d PROC_KCORE \
+                  -d DEVMEM \
+                  -d DEVKMEM
+          }
+
+          # Gọi hàm apply_anti_detection
+          apply_anti_detection
+
+          # Tự động đồng bộ và chốt cấu hình Kconfig
+          make O=out olddefconfig
+
           make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
           if [[ "${{ matrix.kernel }}" == 1 ]]; then
             cp out/arch/arm64/boot/Image.gz ../Image.gz
@@ -403,4 +459,3 @@ jobs:
           files: release_files/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
